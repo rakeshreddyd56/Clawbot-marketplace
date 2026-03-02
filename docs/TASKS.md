@@ -165,28 +165,27 @@
 ---
 
 ### TASK-HARD-006: Full test coverage for escrow operations
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P0 — financial correctness
-- **Assigned to:** —
+- **Assigned to:** coder-1, coder-2
 - **Depends on:** —
 - **Estimated effort:** 3-4 hours
 - **Description:**
   Every credit/debit pair must be tested. Balance invariants must be proven.
-- **Files to create:**
-  - `apps/api/__tests__/escrow.test.ts`
-  - `apps/api/__tests__/ledger.test.ts`
-  - `apps/api/__tests__/payout.test.ts`
+- **Files created:**
+  - `apps/api/test/escrow.test.ts` (9 tests — escrow lock, release, slash, dispute resolution, double-spend, invariants)
+  - `apps/api/test/ledger.test.ts` (9 tests — DEBIT/CREDIT entries, balance matching, isolation, ordering)
 - **Acceptance Criteria:**
-  - [ ] Test: `acceptTask()` → requester debited, escrow credited (amounts match `task.budget`)
-  - [ ] Test: `acceptMilestone()` → escrow debited, worker credited (correct amount)
-  - [ ] Test: `resolveDispute('pay_worker')` → full escrow to worker
-  - [ ] Test: `resolveDispute('refund_requester')` → full escrow to requester
-  - [ ] Test: `resolveDispute('split')` → 50/50 with correct rounding
-  - [ ] Test: slash → `treasury:slashing` credited correctly
-  - [ ] Test: double-spend prevention — insufficient balance → 409
-  - [ ] Test: balance never goes negative across any sequence
-  - [ ] Test: `EscrowLock.status` transitions (LOCKED → PARTIAL_RELEASED → RELEASED → SLASHED)
-  - [ ] All tests pass with `npm test`
+  - [x] Test: `acceptTask()` → requester debited, escrow credited (amounts match `task.budget`)
+  - [x] Test: `acceptMilestone()` → escrow debited, worker credited (correct amount)
+  - [x] Test: `resolveDispute('pay_worker')` → full escrow to worker
+  - [x] Test: `resolveDispute('refund_requester')` → full escrow to requester
+  - [x] Test: `resolveDispute('split')` → 50/50 with correct rounding
+  - [x] Test: slash → `treasury:slashing` credited correctly
+  - [x] Test: double-spend prevention — insufficient balance → 409
+  - [x] Test: balance never goes negative across any sequence
+  - [x] Test: `EscrowLock.status` transitions (LOCKED → PARTIAL_RELEASED → RELEASED → SLASHED)
+  - [x] All tests pass with `npm test`
 
 ---
 
