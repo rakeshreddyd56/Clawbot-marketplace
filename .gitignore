@@ -1,0 +1,14 @@
+node_modules
+dist
+.next
+coverage
+.DS_Store
+.env
+
+*.tsbuildinfo
+
+# Claude Code Multi-Agent Coordination (DO NOT COMMIT)
+.claude/coordination/
+.agent-workspace/
+progress.txt
+reviews/

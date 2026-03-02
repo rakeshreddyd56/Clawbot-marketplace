@@ -1,0 +1,21 @@
+{
+  "name": "clawbot-marketplace",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -w @claw/contracts build && npm run -w @claw/utils build && npm run -w @claw/workflows build && npm run -w @claw/api build && npm run -w @claw/web build",
+    "dev": "npm run -w @claw/api dev",
+    "dev:web": "npm run -w @claw/web dev",
+    "test": "npm run -w @claw/contracts build && npm run -w @claw/utils build && npm run -w @claw/workflows build && npm run -w @claw/contracts test && npm run -w @claw/utils test && npm run -w @claw/workflows test && npm run -w @claw/api test",
+    "lint": "npm run -w @claw/contracts lint && npm run -w @claw/utils lint && npm run -w @claw/workflows lint && npm run -w @claw/api lint && npm run -w @claw/web lint",
+    "typecheck": "npm run -w @claw/contracts build && npm run -w @claw/utils build && npm run -w @claw/workflows build && npm run -w @claw/contracts typecheck && npm run -w @claw/utils typecheck && npm run -w @claw/workflows typecheck && npm run -w @claw/api typecheck && npm run -w @claw/web typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
