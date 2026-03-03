@@ -18,7 +18,19 @@ type SessionClaims = {
 };
 
 function secret(): string {
-  return process.env.SESSION_SECRET ?? 'dev_claw_session_secret_change_me';
+  const configured = process.env.SESSION_SECRET;
+  if (!configured) {
+    // TASK-HARD-008: Loudly warn in non-dev/non-test environments about insecure default
+    if (process.env.NODE_ENV && process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
+      console.error(
+        '[SECURITY WARNING] SESSION_SECRET env var is not set! ' +
+          'Using insecure dev default secret. ' +
+          'Set SESSION_SECRET to a cryptographically random 32+ byte value before deploying.'
+      );
+    }
+    return 'dev_claw_session_secret_change_me';
+  }
+  return configured;
 }
 
 export function issueSessionToken(claims: SessionClaims, ttlSeconds = DEFAULT_TTL_SECONDS): string {
@@ -43,11 +55,13 @@ export function verifySessionToken(token: string): SessionClaims {
 }
 
 export function setSessionCookie(reply: FastifyReply, token: string): void {
+  // TASK-HARD-008: Secure cookie flags based on NODE_ENV
+  const isProduction = process.env.NODE_ENV === 'production';
   reply.setCookie(SESSION_COOKIE, token, {
     path: '/',
     httpOnly: true,
-    sameSite: 'lax',
-    secure: false,
+    sameSite: isProduction ? 'strict' : 'lax',
+    secure: isProduction,
     maxAge: DEFAULT_TTL_SECONDS
   });
 }

@@ -22,6 +22,8 @@ export function createStore(): Store {
     historicalOwnerHandles: new Map(),
     lastIdentityTokens: new Map(),
     ledger: [],
-    balances: new Map()
+    balances: new Map(),
+    deliverySecrets: new Map(),
+    taskMilestoneNames: new Map()
   };
 }

@@ -30,8 +30,14 @@ export class FakeMoltbookVerifier implements MoltbookVerifier {
       throw new DomainError('AUDIENCE_REQUIRED', 'Audience is required.', 400);
     }
 
-    const agentId = identityToken.replace('mbtok_', 'agent_');
     const tokenLower = identityToken.toLowerCase();
+
+    // TASK-TEST-001: Support owner_alt_ prefix for owner mismatch testing.
+    // Tokens like `mbtok_owner_alt_SEED` strip `owner_alt_` for agentId derivation
+    // so the SAME underlying agent can appear with a different ownerXHandle on reverify.
+    const agentTokenBase = identityToken.replace(/owner_alt_/gi, '');
+    const agentId = agentTokenBase.replace('mbtok_', 'agent_');
+
     const valid = !tokenLower.includes('invalid');
     const isClaimed = !tokenLower.includes('unclaimed');
     const ownerXVerified = !tokenLower.includes('owner_unverified');
@@ -44,6 +50,7 @@ export class FakeMoltbookVerifier implements MoltbookVerifier {
     const karma = tierC ? 12 : tierB ? 35 : 140;
     const posts = tierC ? 2 : tierB ? 6 : 32;
     const comments = tierC ? 3 : tierB ? 7 : 36;
+    // When token includes 'owner_alt', produce a different ownerXHandle for the same agentId
     const ownerXHandle = tokenLower.includes('owner_alt') ? `owner_alt_${agentId.slice(-6)}` : `owner_${agentId.slice(-8)}`;
 
     return {

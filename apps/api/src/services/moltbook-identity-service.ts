@@ -16,8 +16,19 @@ import type { MoltbookVerifier } from '../adapters/moltbook.js';
 import type { AuthContext, Store } from '../types/domain.js';
 import { DomainError, assertDomain } from '../core/errors.js';
 
-const TRUSTED_WINDOW_MS = 50 * 60 * 1000;
-const EXPIRY_WINDOW_MS = 60 * 60 * 1000;
+// TASK-HARD-008: Configurable freshness windows via env vars
+const DEFAULT_TRUSTED_WINDOW_MIN = 50;
+const DEFAULT_EXPIRY_WINDOW_MIN = 60;
+
+function getTrustedWindowMs(): number {
+  const min = parseInt(process.env.MOLTBOOK_TRUSTED_WINDOW_MIN ?? '', 10);
+  return (isNaN(min) ? DEFAULT_TRUSTED_WINDOW_MIN : min) * 60 * 1000;
+}
+
+function getExpiryWindowMs(): number {
+  const min = parseInt(process.env.MOLTBOOK_EXPIRY_WINDOW_MIN ?? '', 10);
+  return (isNaN(min) ? DEFAULT_EXPIRY_WINDOW_MIN : min) * 60 * 1000;
+}
 
 export class MoltbookIdentityService {
   constructor(
@@ -28,8 +39,8 @@ export class MoltbookIdentityService {
   async verify(identityToken: string, audience: string): Promise<MoltbookVerificationSnapshot> {
     const verified = await this.verifier.verify(identityToken, audience);
     const checkedAt = verified.checkedAt || nowIso();
-    const expiresAt = verified.expiresAt || new Date(Date.now() + EXPIRY_WINDOW_MS).toISOString();
-    const trustedUntilAt = new Date(new Date(checkedAt).getTime() + TRUSTED_WINDOW_MS).toISOString();
+    const expiresAt = verified.expiresAt || new Date(Date.now() + getExpiryWindowMs()).toISOString();
+    const trustedUntilAt = new Date(new Date(checkedAt).getTime() + getTrustedWindowMs()).toISOString();
     const tokenExpired = new Date(expiresAt).getTime() <= Date.now();
 
     const historicalOwner = this.store.historicalOwnerHandles.get(verified.agentId);

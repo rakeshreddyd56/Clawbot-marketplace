@@ -53,7 +53,10 @@ export class ArtifactService {
     assertDomain(actor.actorAgentId === contract!.workerAgentId || actor.role === 'admin', 'ARTIFACT_FORBIDDEN', 'Only assigned worker can finalize artifact.', 403);
     assertDomain(record!.finalizeToken === input.finalizeToken, 'ARTIFACT_FINALIZE_TOKEN_INVALID', 'Invalid finalize token.', 401);
 
-    const valid = input.signature.length > 10 && input.sha256.length >= 32;
+    // TASK-HARD-010: Validate sha256 as exactly 64 lowercase hex chars and
+    // signature as exactly 64 lowercase hex chars (HMAC-SHA256 output).
+    const sha256HexPattern = /^[0-9a-f]{64}$/;
+    const valid = sha256HexPattern.test(input.sha256) && sha256HexPattern.test(input.signature);
     const finalized = {
       ...record!,
       sha256: input.sha256,

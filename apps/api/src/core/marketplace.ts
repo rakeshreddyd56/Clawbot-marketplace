@@ -20,6 +20,7 @@ import {
   type Task,
   type TaskScopeManifest
 } from '@claw/contracts';
+import crypto from 'node:crypto';
 import { nowIso, sha256, signWithSecret, uid, verifyWithSecret } from '@claw/utils';
 import type { MoltbookVerifier } from '../adapters/moltbook.js';
 import type { StripeAdapter } from '../adapters/stripe.js';
@@ -199,6 +200,11 @@ export class MarketplaceCore {
     this.store.tasks.set(task.taskId, task);
     this.store.bids.set(task.taskId, []);
 
+    // TASK-FEAT-001: Persist custom milestone names for use at acceptTask()
+    if (input.milestoneNames && input.milestoneNames.length > 0) {
+      this.store.taskMilestoneNames.set(task.taskId, input.milestoneNames);
+    }
+
     this.publish('task.created', task.taskId, { requesterAgentId: task.requesterAgentId, budget: task.budget });
     return task;
   }
@@ -316,6 +322,7 @@ export class MarketplaceCore {
 
     const lease = this.expireLeaseIfStale(this.getLease(leaseId));
     assertDomain(lease.taskId === taskId, 'LEASE_TASK_MISMATCH', 'Lease/task mismatch.', 409);
+    assertDomain(lease.status !== 'EXPIRED', 'LEASE_EXPIRED', 'Lease has expired.', 409);
     assertDomain(lease.status === 'ACTIVE', 'LEASE_INACTIVE', 'Lease is inactive.', 409);
     assertDomain(lease.workerAgentId !== task.requesterAgentId, 'INVALID_WORKER', 'Requester cannot self-assign.', 400);
     assertDomain(Date.now() <= new Date(lease.leaseExpiresAt).getTime(), 'LEASE_EXPIRED', 'Lease has expired.', 409);
@@ -327,14 +334,22 @@ export class MarketplaceCore {
     assertDomain(requesterBalance >= task.budget, 'INSUFFICIENT_BALANCE', 'Requester has insufficient credits.', 409);
 
     const contractId = uid('contract');
-    const milestoneNames = ['Phase 1', 'Phase 2'];
-    const half = Number((task.budget / 2).toFixed(2));
+
+    // TASK-FEAT-001: Use custom milestone names if provided at task creation (1-10), else default 2-phase split
+    const customNames = this.store.taskMilestoneNames.get(taskId);
+    const milestoneNames = (customNames && customNames.length > 0) ? customNames : ['Phase 1', 'Phase 2'];
+    assertDomain(milestoneNames.length >= 1 && milestoneNames.length <= 10, 'INVALID_MILESTONE_COUNT', 'Milestone count must be 1-10.', 400);
+
+    // Equal split: each milestone gets budget/n; last milestone absorbs rounding remainder
+    const perMilestone = Number((task.budget / milestoneNames.length).toFixed(2));
     const milestones = milestoneNames.map((name, idx) =>
       MilestoneSchema.parse({
         milestoneId: uid('ms'),
         contractId,
         name,
-        amountCredits: idx === milestoneNames.length - 1 ? Number((task.budget - half).toFixed(2)) : half,
+        amountCredits: idx === milestoneNames.length - 1
+          ? Number((task.budget - perMilestone * (milestoneNames.length - 1)).toFixed(2))
+          : perMilestone,
         dueAt: task.deadlineAt,
         acceptanceRuleRef: 'default.acceptance.v1',
         status: idx === 0 ? 'IN_PROGRESS' : 'PENDING'
@@ -354,6 +369,12 @@ export class MarketplaceCore {
       signedAt: nowIso(),
       milestones
     });
+
+    // TASK-HARD-010: Generate cryptographically random delivery secret per milestone
+    for (const milestone of milestones) {
+      const secret = crypto.randomBytes(32).toString('hex');
+      this.store.deliverySecrets.set(`${contractId}:${milestone.milestoneId}`, secret);
+    }
 
     this.debit(task.requesterAgentId, task.budget, 'escrow.lock', 'contract', contract.contractId);
     this.credit(this.escrowAccount(contract.contractId), task.budget, 'escrow.lock', 'contract', contract.contractId);
@@ -389,6 +410,7 @@ export class MarketplaceCore {
     const lease = this.expireLeaseIfStale(this.getLease(leaseId));
     assertDomain(lease.taskId === taskId, 'LEASE_TASK_MISMATCH', 'Lease/task mismatch.', 409);
     assertDomain(actor.actorAgentId === lease.workerAgentId, 'LEASE_NOT_OWNER', 'Only lease owner can heartbeat.', 403);
+    assertDomain(lease.status !== 'EXPIRED', 'LEASE_EXPIRED', 'Lease has expired.', 409);
     assertDomain(lease.status === 'ACTIVE', 'LEASE_INACTIVE', 'Lease is inactive.', 409);
     this.verifyLeaseToken(leaseId, leaseToken);
 
@@ -676,6 +698,7 @@ export class MarketplaceCore {
     const task = this.getTask(taskId);
     const lease = this.expireLeaseIfStale(this.getLease(leaseId));
     assertDomain(lease.taskId === task.taskId, 'LEASE_TASK_MISMATCH', 'Lease/task mismatch.', 409);
+    assertDomain(lease.status !== 'EXPIRED', 'LEASE_EXPIRED', 'Lease has expired.', 409);
     assertDomain(lease.status === 'ACTIVE', 'LEASE_INACTIVE', 'Lease is inactive.', 409);
     assertDomain(Date.now() <= new Date(lease.leaseExpiresAt).getTime(), 'LEASE_EXPIRED', 'Lease has expired.', 409);
     this.verifyLeaseToken(leaseId, leaseToken);
@@ -879,7 +902,18 @@ export class MarketplaceCore {
     return `escrow:${contractId}`;
   }
 
+  /**
+   * TASK-HARD-010: Look up the per-milestone random delivery secret from the store.
+   * Falls back to a deterministic string only for backward-compat (old contracts created
+   * before this fix had no stored secret). New contracts always have a stored secret.
+   */
   private deliverySecret(contractId: string, milestoneId: string): string {
+    const key = `${contractId}:${milestoneId}`;
+    const stored = this.store.deliverySecrets.get(key);
+    if (stored) {
+      return stored;
+    }
+    // Legacy fallback for tests / contracts created before TASK-HARD-010
     return `delivery:${contractId}:${milestoneId}`;
   }
 

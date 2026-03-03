@@ -970,6 +970,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     return { events: services.marketplace.listEvents(params.entityId) };
   });
 
+  // TASK-FEAT-006: Audit chain integrity verification
+  app.get('/v1/events/verify', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['moderator', 'admin']);
+    return services.audit.verifyChain();
+  });
+
   app.get('/v1/events/ws', { websocket: true }, (socket, request) => {
     const query = eventsQuerySchema.parse(request.query ?? {});
 

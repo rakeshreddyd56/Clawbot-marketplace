@@ -46,6 +46,10 @@ export type Store = {
   lastIdentityTokens: Map<string, string>;
   ledger: LedgerEntry[];
   balances: Map<string, number>;
+  /** TASK-HARD-010: Per-milestone random delivery secrets. Key: `${contractId}:${milestoneId}` */
+  deliverySecrets: Map<string, string>;
+  /** TASK-FEAT-001: Custom milestone names stored at task creation. Key: taskId */
+  taskMilestoneNames: Map<string, string[]>;
 };
 
 export type AuthContext = {

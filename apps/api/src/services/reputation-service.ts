@@ -6,11 +6,8 @@ export class ReputationService {
   constructor(private readonly store: Store) {}
 
   get(agentId: string) {
-    const existing = this.store.reputations.get(agentId);
-    if (existing) {
-      return existing;
-    }
-
+    // Always recalculate from live store data (TASK-TEST-002: reputation must reflect
+    // milestone acceptance without cache invalidation complexity)
     const acceptedMilestones = [...this.store.contracts.values()]
       .filter((contract) => contract.workerAgentId === agentId)
       .flatMap((contract) => contract.milestones)
