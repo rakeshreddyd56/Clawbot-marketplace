@@ -415,9 +415,9 @@
 ---
 
 ### TASK-FEAT-002: Moltbook re-verify UI flow
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P1
-- **Assigned to:** —
+- **Assigned to:** ui-builder
 - **Depends on:** —
 - **Estimated effort:** 2-3 hours
 - **Description:**
@@ -437,9 +437,9 @@
 ---
 
 ### TASK-FEAT-003: Trust tier upgrade path endpoint + UI
-- **Status:** backlog
+- **Status:** done (UI only — API endpoint remains for backend agent)
 - **Priority:** P2
-- **Assigned to:** —
+- **Assigned to:** ui-builder
 - **Depends on:** TASK-HARD-001
 - **Estimated effort:** 2-3 hours
 - **Description:**
@@ -480,9 +480,9 @@
 ---
 
 ### TASK-FEAT-005: Full onboarding readiness widget (frontend)
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P1
-- **Assigned to:** —
+- **Assigned to:** ui-builder
 - **Depends on:** —
 - **Estimated effort:** 2-3 hours
 - **Description:**
@@ -563,6 +563,386 @@
   - [ ] Split ruling: 50/50 distribution verified with correct rounding
   - [ ] All audit events emitted in correct sequence with valid hash chain
   - [ ] All tests pass with `npm test`
+
+---
+
+## Bug Fix Tasks (from Security Audit + Code Review 2026-03-02)
+
+> These tasks were catalogued by the architect agent from `reviews/security-audit-full.md` and `reviews/review-full-codebase-2026-03-02.md`. Each has a corresponding task on the project dashboard.
+
+---
+
+### BUG-CRIT-001: Fix unauthenticated WebSocket endpoints
+- **Status:** backlog
+- **Priority:** P0 — CRITICAL, deployment blocker
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 1 hour
+- **Description:**
+  `/v1/events/ws` and `/v1/realtime` WebSocket handlers have **no authentication check**.
+  Any anonymous client can connect and receive ALL audit events, including wallet amounts,
+  dispute rulings, agent identities, and contract financials.
+- **Files to modify:**
+  - `apps/api/src/app.ts` (lines 973-1014)
+- **Fix:**
+  ```typescript
+  app.get('/v1/events/ws', { websocket: true }, (socket, request) => {
+    const actor = auth(request);  // ADD THIS
+    enforcePolicy(services, actor, 'audit.read');  // ADD THIS
+    ...
+  });
+  app.get('/v1/realtime', { websocket: true }, (socket, request) => {
+    const actor = auth(request);  // ADD THIS
+    enforcePolicy(services, actor, 'audit.read');  // ADD THIS — or 'realtime.subscribe'
+    ...
+  });
+  ```
+- **Acceptance Criteria:**
+  - [ ] Unauthenticated WebSocket connection → 401 error (connection refused)
+  - [ ] Valid session token → connection accepted
+  - [ ] Non-admin cannot subscribe to another agent's entity events
+  - [ ] Tests: anon connection rejected; auth connection accepted; entity filter enforced
+
+---
+
+### BUG-HIGH-001: Fix CORS wildcard origin with credentials (CSRF risk)
+- **Status:** backlog
+- **Priority:** P1 — HIGH, deployment blocker
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  `@fastify/cors` registered with `origin: true` (reflects any Origin header) and
+  `credentials: true`. Any attacker-controlled website can make credentialed
+  cross-origin requests using a victim's session cookie, enabling CSRF on financial
+  endpoints (topup, payout, milestone accept).
+- **Files to modify:**
+  - `apps/api/src/app.ts` (lines 448-451)
+  - `.env.example` (add `ALLOWED_ORIGINS`)
+- **Fix:**
+  ```typescript
+  await app.register(cors, {
+    origin: process.env.ALLOWED_ORIGINS?.split(',') ?? ['http://localhost:3001'],
+    credentials: true
+  });
+  ```
+- **Acceptance Criteria:**
+  - [ ] Unknown Origin header → CORS rejected (no ACAO header)
+  - [ ] `http://localhost:3001` → accepted
+  - [ ] `ALLOWED_ORIGINS` env var configures allowed list
+  - [ ] Tests: allowed origin accepted; unknown origin rejected
+
+---
+
+### BUG-HIGH-002: Fix legacy deliver/accept routes bypassing policy + freshness checks
+- **Status:** backlog
+- **Priority:** P1 — HIGH, deployment blocker
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 1 hour
+- **Description:**
+  `POST /v1/contracts/:contractId/deliver` and `POST /v1/contracts/:contractId/accept`
+  (lines 815-837 in `app.ts`) skip both `enforcePolicy()` and `enforceFreshIdentity()`.
+  This means: (1) no `PolicyDecision` record is written for milestone delivery/acceptance
+  (which releases escrow funds), and (2) a stale/expired Moltbook verification bypasses
+  the freshness gate for financial operations.
+- **Files to modify:**
+  - `apps/api/src/app.ts` (lines 815-837)
+- **Fix:** Add `enforcePolicy` + `enforceFreshIdentity` to both routes, OR deprecate
+  and remove the legacy routes entirely (preferred since per-milestone routes cover both).
+- **Acceptance Criteria:**
+  - [ ] `POST /v1/contracts/:id/deliver` with expired Moltbook → 401 REVERIFY_REQUIRED
+  - [ ] `POST /v1/contracts/:id/accept` with expired Moltbook → 401 REVERIFY_REQUIRED
+  - [ ] PolicyDecision record written for both operations
+  - [ ] Tests: expired session rejected; valid session accepted; audit records present
+
+---
+
+### BUG-HIGH-003: Fix moderator can slash/sanction arbitrary agents
+- **Status:** backlog
+- **Priority:** P1 — HIGH, deployment blocker
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  `resolveDispute()` in `marketplace.ts` accepts any `targetAgentId` from the request body
+  without validating it is a party to the dispute. A malicious or compromised moderator
+  account can slash the balance and apply SUSPEND/BAN sanctions to **any agent in the
+  marketplace** by targeting arbitrary `agentId` values.
+- **Files to modify:**
+  - `apps/api/src/core/marketplace.ts` (lines 556-638)
+- **Fix:**
+  ```typescript
+  // Add this assertion at the top of resolveDispute():
+  assertDomain(
+    targetAgentId === contract.requesterAgentId || targetAgentId === contract.workerAgentId,
+    'INVALID_TARGET_AGENT',
+    'Target agent must be a party to the dispute contract.',
+    400
+  );
+  ```
+- **Acceptance Criteria:**
+  - [ ] `targetAgentId` not party to dispute → 400 INVALID_TARGET_AGENT
+  - [ ] `targetAgentId` = requesterAgentId → sanction applied correctly
+  - [ ] `targetAgentId` = workerAgentId → sanction applied correctly
+  - [ ] Tests: non-party agent ID rejected; both valid parties accepted
+
+---
+
+### BUG-MED-001: Fix lease token comparison not timing-safe
+- **Status:** backlog
+- **Priority:** P1
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  `verifyLeaseToken()` in `marketplace.ts` uses `assertDomain(current === token, ...)` —
+  plain JavaScript string equality that short-circuits on first differing character.
+  This is susceptible to timing oracle attacks allowing token enumeration.
+  `@claw/utils` exports `verifyWithSecret()` which already uses `crypto.timingSafeEqual`.
+- **Files to modify:**
+  - `apps/api/src/core/marketplace.ts` (lines 747-749)
+- **Fix:**
+  ```typescript
+  import { timingSafeEqual } from 'crypto';
+  private verifyLeaseToken(leaseId: string, token: string): void {
+    const current = this.leaseSecrets.get(leaseId);
+    assertDomain(Boolean(current), 'LEASE_TOKEN_MISSING', 'Lease token missing.', 401);
+    const valid = timingSafeEqual(Buffer.from(current!), Buffer.from(token));
+    assertDomain(valid, 'LEASE_TOKEN_INVALID', 'Invalid lease token.', 401);
+  }
+  ```
+- **Acceptance Criteria:**
+  - [ ] Correct token → accepted
+  - [ ] Wrong token → 401 (consistent timing)
+  - [ ] Uses `crypto.timingSafeEqual` or equivalent
+
+---
+
+### BUG-MED-002: Fix evidence endpoint leaks global policy decisions
+- **Status:** backlog
+- **Priority:** P2
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 1 hour
+- **Description:**
+  `GET /v1/disputes/:disputeId/evidence` returns `services.store.policyDecisions.slice(-50)` —
+  the last 50 GLOBAL policy decisions, not filtered to this dispute or its contract parties.
+  Any dispute party can see policy decisions from other agents' activities, leaking usage
+  patterns and timing across the platform.
+- **Files to modify:**
+  - `apps/api/src/app.ts` (line 903)
+- **Fix:**
+  ```typescript
+  // Filter to only decisions for this dispute's parties:
+  policyDecisions: services.store.policyDecisions.filter(d =>
+    d.actorAgentId === contract.requesterAgentId ||
+    d.actorAgentId === contract.workerAgentId ||
+    d.entityId === dispute.disputeId ||
+    d.entityId === contract.contractId
+  ).slice(-50)
+  ```
+- **Acceptance Criteria:**
+  - [ ] Evidence endpoint only returns decisions for dispute parties
+  - [ ] Admin/moderator can see all decisions
+  - [ ] Tests: party sees only own decisions; unrelated decisions excluded
+
+---
+
+### BUG-MED-003: Fix task.accept and 6 routes missing from PolicyDecisionService
+- **Status:** backlog
+- **Priority:** P2
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 2 hours
+- **Description:**
+  Architecture rule: "All API routes MUST check policy via PolicyDecisionService."
+  Violations:
+  1. `POST /v1/tasks/:taskId/accept` — uses `PolicyEngine.enforce()` internally,
+     not `PolicyDecisionService`. No `PolicyDecision` record created for contract creation.
+  2. Six routes with no `enforcePolicy()` call at all:
+     - `GET /v1/tasks/:taskId/eligibility`
+     - `POST /v1/tasks/:taskId/accept` (the accept endpoint itself)
+     - `GET /v1/disputes/:disputeId`
+     - `GET /v1/disputes/:disputeId/evidence`
+     - `POST /v1/tasks/:taskId/vault-token`
+     - `POST /v1/contracts/:contractId/signature-preview`
+- **Files to modify:**
+  - `apps/api/src/core/policy-decision.ts` (add `task.accept`, `task.eligibility.read`,
+    `dispute.read`, `dispute.evidence.read`, `vault.token.create`, `artifact.signature.preview`
+    to `KNOWN_ACTIONS`)
+  - `apps/api/src/app.ts` (add `enforcePolicy` calls to all 6 routes)
+- **Acceptance Criteria:**
+  - [ ] All 6 routes emit `PolicyDecision` records
+  - [ ] `task.accept` action in KNOWN_ACTIONS with correct RBAC
+  - [ ] Deny-by-default still applies to unknown actions
+  - [ ] Tests: policy decisions recorded for all previously-missing routes
+
+---
+
+### BUG-MED-004: Fix VaultService accepts CLOSED lease status
+- **Status:** backlog
+- **Priority:** P2
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  `vault-service.ts` line 16 asserts `lease.status === 'ACTIVE' || lease.status === 'CLOSED'`.
+  Leases are set to CLOSED when a contract is created (`acceptTask`). This allows vault tokens
+  to be issued after the lease lifecycle has ended. While the upstream `getScopeForLease()`
+  guard (requires ACTIVE) prevents exploitation in the current call chain, direct calls
+  to `VaultService.issueVaultToken()` would bypass this.
+- **Files to modify:**
+  - `apps/api/src/services/vault-service.ts` (line 16)
+- **Fix:** Remove `|| lease!.status === 'CLOSED'` — only ACTIVE leases should grant vault tokens.
+- **Acceptance Criteria:**
+  - [ ] Vault token request with CLOSED lease → 409 LEASE_INACTIVE
+  - [ ] Vault token request with ACTIVE lease → 200 OK
+  - [ ] Tests: closed lease rejected
+
+---
+
+### BUG-MED-005: Add treasury counterparty entries for wallet topup/payout
+- **Status:** backlog
+- **Priority:** P2
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 1 hour
+- **Description:**
+  CLAUDE.md rule: "All escrow operations MUST be balanced (every DEBIT has a corresponding CREDIT)."
+  `topup()` credits `actorAgentId` with no corresponding debit from any account.
+  `payout()` debits `actorAgentId` with no corresponding credit to any account.
+  The internal ledger cannot reconcile to zero for external monetary flows.
+- **Files to modify:**
+  - `apps/api/src/core/marketplace.ts` (lines 149-159, 896-902)
+- **Fix:**
+  ```typescript
+  // topup: debit from treasury:inbound first
+  this.credit('treasury:inbound', amount, 'wallet.topup', 'topup', resp.topupId);
+  this.debit('treasury:inbound', amount, 'wallet.topup', 'topup', resp.topupId);  // or reverse
+  // payout: credit to treasury:outbound
+  this.debit(actor.actorAgentId, amount, 'wallet.payout_request', 'payout', payout.payoutId);
+  this.credit('treasury:outbound', amount, 'wallet.payout_request', 'payout', payout.payoutId);
+  ```
+- **Acceptance Criteria:**
+  - [ ] After topup: DEBIT(`treasury:inbound`, amount) + CREDIT(`actorAgentId`, amount)
+  - [ ] After payout: DEBIT(`actorAgentId`, amount) + CREDIT(`treasury:outbound`, amount)
+  - [ ] Sum of all ledger entries = 0 across all accounts
+  - [ ] Tests: ledger sums to zero after complete topup+task+payout cycle
+
+---
+
+### BUG-MED-006: Fix ReputationService stale cache never invalidated
+- **Status:** backlog
+- **Priority:** P2
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 1 hour
+- **Description:**
+  `ReputationService.get()` returns a cached reputation score forever after the first
+  computation — even after new milestones are accepted, disputes are finalized, or
+  sanctions are applied. All subsequent calls return stale data.
+- **Files to modify:**
+  - `apps/api/src/services/reputation-service.ts` (lines 8-10)
+  - `apps/api/src/core/marketplace.ts` (or `AuditLedger` subscriber — add cache invalidation)
+- **Fix Options:**
+  1. Remove the early-return cache entirely (recompute on every `get()` call)
+  2. Subscribe to audit events: invalidate on `milestone.accepted`, `dispute.resolved`,
+     `sanction.applied` event types
+- **Acceptance Criteria:**
+  - [ ] Reputation score updates after milestone accepted
+  - [ ] Reputation score updates after dispute lost (sanction)
+  - [ ] `GET /v1/reputation/:agentId` returns current score, not stale data
+  - [ ] Tests: score stale before fix; correct after fix
+
+---
+
+### BUG-MIN-001: Fix workflow state machine transition bugs
+- **Status:** backlog
+- **Priority:** P3
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  Two workflow state machine bugs that will cause Temporal replay desync when
+  the real Temporal worker is wired in (TASK-HARD-004):
+  1. `disputeResolutionTransition` with `auto_decide` command returns `DISPUTE_OPEN`
+     (no-op) but the domain creates disputes as `AUTO_DECIDED` immediately.
+     `WorkflowState` type is missing `DISPUTE_AUTO_DECIDED`.
+  2. `taskLifecycleTransition` with `cancel` command returns `TASK_POSTED` but
+     domain sets status to `CLOSED`. `WorkflowState` type is missing `TASK_CLOSED`.
+- **Files to modify:**
+  - `packages/workflows/src/index.ts` (lines 1-10, 22, 50)
+- **Fix:**
+  ```typescript
+  export type WorkflowState =
+    | 'TASK_POSTED' | 'TASK_RESERVED' | 'TASK_ASSIGNED' | 'TASK_CLOSED'  // ADD TASK_CLOSED
+    | 'MILESTONE_RUNNING' | 'MILESTONE_DELIVERED' | 'MILESTONE_ACCEPTED'
+    | 'DISPUTE_OPEN' | 'DISPUTE_AUTO_DECIDED'  // ADD DISPUTE_AUTO_DECIDED
+    | 'DISPUTE_APPEAL' | 'DISPUTE_FINAL';
+
+  // Fix cancel transition:
+  if (command.type === 'cancel') return 'TASK_CLOSED';  // was TASK_POSTED
+
+  // Fix auto_decide transition:
+  if (state === 'DISPUTE_OPEN' && command.type === 'auto_decide') return 'DISPUTE_AUTO_DECIDED';
+  ```
+- **Acceptance Criteria:**
+  - [ ] `TASK_CLOSED` and `DISPUTE_AUTO_DECIDED` added to `WorkflowState` type
+  - [ ] `cancel` command → `TASK_CLOSED` (matches domain)
+  - [ ] `auto_decide` command → `DISPUTE_AUTO_DECIDED` (matches domain)
+  - [ ] Existing tests still pass
+
+---
+
+### BUG-MIN-002: Fix unvalidated agentId query parameter in eligibility routes
+- **Status:** backlog
+- **Priority:** P3
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 15 minutes
+- **Description:**
+  `GET /v1/tasks/:taskId/eligibility` (line 627) accesses `agentId` via raw cast
+  (`String((request.query as Record<string, unknown>)?.agentId ?? '')`) bypassing Zod.
+  `workerEligibilityQuerySchema` already defines `agentId: z.string().min(1).optional()`.
+  Use the parsed result instead.
+- **Files to modify:**
+  - `apps/api/src/app.ts` (lines 621-629)
+- **Fix:** Parse `request.query` with `workerEligibilityQuerySchema.parse(request.query)` and
+  use `query.agentId` directly.
+- **Acceptance Criteria:**
+  - [ ] `agentId` query param validated via Zod schema
+  - [ ] Invalid agentId format → 400 VALIDATION_ERROR
+  - [ ] Consistent with project convention
+
+---
+
+### BUG-MIN-003: Fix BFF proxy path segments lack traversal protection
+- **Status:** backlog
+- **Priority:** P3
+- **Assigned to:** —
+- **Depends on:** —
+- **Estimated effort:** 30 minutes
+- **Description:**
+  The catch-all BFF proxy at `apps/web/app/api/bff/[...path]/route.ts` constructs
+  upstream URLs from path segments without checking for `..` or encoded traversal
+  sequences (`%2F..%2F`). While low severity (apiBase is internal), it is inconsistent
+  with project conventions.
+- **Files to modify:**
+  - `apps/web/app/api/bff/[...path]/route.ts`
+- **Fix:** Add path segment validation before URL construction:
+  ```typescript
+  const sanitized = path.map(segment => {
+    if (segment.includes('..') || segment.includes('%2F') || segment.includes('%2E')) {
+      throw new Error('Invalid path segment');
+    }
+    return segment;
+  });
+  ```
+- **Acceptance Criteria:**
+  - [ ] `..` in path segment → 400 error
+  - [ ] Encoded traversal sequences → 400 error
+  - [ ] Valid paths → proxied correctly
 
 ---
 
