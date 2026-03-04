@@ -1,0 +1,192 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Local Development docker-compose
+#
+# Services:
+#   postgres        — PostgreSQL 15 (port 5432)
+#   redis           — Redis 7 (port 6379)
+#   kafka           — Kafka 3 via KRaft (port 9092, no Zookeeper)
+#   otel-collector  — OpenTelemetry Collector (4317 gRPC, 4318 HTTP, 8889 prom)
+#   api             — Fastify API Gateway (port 3000) — built from source
+#   web             — Next.js Web Console (port 3001) — built from source
+#
+# Usage:
+#   docker compose up -d postgres redis kafka otel-collector
+#   docker compose up -d api web
+#   docker compose logs -f api
+#
+# NOTE: Secrets below are intentionally weak dev-only values.
+#       Never use these in staging or production.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: clawbot-marketplace
+
+services:
+  # ── PostgreSQL 15 ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: clawbot
+      POSTGRES_PASSWORD: clawbot_dev_secret
+      POSTGRES_DB: clawbot_marketplace
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d/migrations:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clawbot -d clawbot_marketplace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ── Redis 7 ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly yes
+      - --maxmemory 256mb
+      - --maxmemory-policy allkeys-lru
+      - --requirepass clawbot_redis_secret
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "clawbot_redis_secret", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── Kafka 3 (KRaft mode, no Zookeeper) ───────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.7.0
+    restart: unless-stopped
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: clawbot-dev-cluster-id-0001
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "kafka-broker-api-versions --bootstrap-server localhost:9092",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ── OpenTelemetry Collector ───────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.0
+    restart: unless-stopped
+    command: ["--config=/conf/otel-collector-local.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-local.yaml:/conf/otel-collector-local.yaml:ro
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+      - "8888:8888" # Collector internal metrics
+      - "8889:8889" # Prometheus exporter metrics
+      - "13133:13133" # Health check
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── API Gateway + BFF ─────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      DATABASE_URL: postgresql://clawbot:clawbot_dev_secret@postgres:5432/clawbot_marketplace
+      REDIS_URL: redis://:clawbot_redis_secret@redis:6379
+      KAFKA_BROKERS: kafka:9092
+      SESSION_SECRET: dev-session-secret-change-in-production-min-32-chars
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: api-gateway-bff
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: otlp
+      # Moltbook adapter: falls back to fake when unset
+      # MOLTBOOK_API_URL: https://moltbook.example.com
+      # Stripe adapter: falls back to fake when unset
+      # STRIPE_API_KEY: sk_test_...
+      # Temporal Cloud: falls back to fake when unset
+      # TEMPORAL_ADDRESS: your-namespace.tmprl.cloud:7233
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/healthz', r => process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Next.js Web Console ───────────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: runtime
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      # BFF proxy target — web-console calls /api/bff/* which proxies to API
+      API_BASE_URL: http://api:3000
+      OTEL_SERVICE_NAME: web-console
+    ports:
+      - "3001:3001"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  kafka_data:
+    driver: local

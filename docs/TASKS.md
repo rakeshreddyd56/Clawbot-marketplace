@@ -643,9 +643,9 @@
 ---
 
 ### BUG-HIGH-001: Fix CORS wildcard origin with credentials (CSRF risk)
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P1 — HIGH, deployment blocker
-- **Assigned to:** —
+- **Assigned to:** coder
 - **Depends on:** —
 - **Estimated effort:** 30 minutes
 - **Description:**
@@ -727,9 +727,9 @@
 ---
 
 ### BUG-MED-001: Fix lease token comparison not timing-safe
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P1
-- **Assigned to:** —
+- **Assigned to:** coder
 - **Depends on:** —
 - **Estimated effort:** 30 minutes
 - **Description:**
@@ -750,16 +750,16 @@
   }
   ```
 - **Acceptance Criteria:**
-  - [ ] Correct token → accepted
-  - [ ] Wrong token → 401 (consistent timing)
-  - [ ] Uses `crypto.timingSafeEqual` or equivalent
+  - [x] Correct token → accepted
+  - [x] Wrong token → 401 (consistent timing)
+  - [x] Uses `crypto.timingSafeEqual` or equivalent
 
 ---
 
 ### BUG-MED-002: Fix evidence endpoint leaks global policy decisions
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P2
-- **Assigned to:** —
+- **Assigned to:** coder
 - **Depends on:** —
 - **Estimated effort:** 1 hour
 - **Description:**
@@ -780,16 +780,16 @@
   ).slice(-50)
   ```
 - **Acceptance Criteria:**
-  - [ ] Evidence endpoint only returns decisions for dispute parties
-  - [ ] Admin/moderator can see all decisions
-  - [ ] Tests: party sees only own decisions; unrelated decisions excluded
+  - [x] Evidence endpoint only returns decisions for dispute parties
+  - [x] Admin/moderator can see all decisions
+  - [x] Tests: party sees only own decisions; unrelated decisions excluded
 
 ---
 
 ### BUG-MED-003: Fix task.accept and 6 routes missing from PolicyDecisionService
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P2
-- **Assigned to:** —
+- **Assigned to:** security-auditor
 - **Depends on:** —
 - **Estimated effort:** 2 hours
 - **Description:**
@@ -810,10 +810,10 @@
     to `KNOWN_ACTIONS`)
   - `apps/api/src/app.ts` (add `enforcePolicy` calls to all 6 routes)
 - **Acceptance Criteria:**
-  - [ ] All 6 routes emit `PolicyDecision` records
-  - [ ] `task.accept` action in KNOWN_ACTIONS with correct RBAC
-  - [ ] Deny-by-default still applies to unknown actions
-  - [ ] Tests: policy decisions recorded for all previously-missing routes
+  - [x] All 6 routes emit `PolicyDecision` records
+  - [x] `task.accept` action in KNOWN_ACTIONS with correct RBAC
+  - [x] Deny-by-default still applies to unknown actions
+  - [x] Tests: policy decisions recorded for all previously-missing routes (11 tests in policy-enforcement.test.ts)
 
 ---
 

@@ -194,7 +194,8 @@ describe('v1 plan API parity', () => {
       headers: authHeaders(worker.agentId, 'worker'),
       payload: {
         sha256: 'abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abcd',
-        signature: 'signed-payload-123456',
+        // signature must be exactly 64 lowercase hex chars (TASK-HARD-010 validation)
+        signature: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
         finalizeToken: upload.finalizeToken
       }
     });

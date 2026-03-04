@@ -3,17 +3,21 @@ import { TopNav } from './nav';
 
 export function ConsoleShell(props: { title: string; subtitle: string; children: ReactNode; rail?: ReactNode }) {
   return (
-    <main>
+    <main id="main-content">
       <header className="header">
         <div>
           <h1 className="page-title">{props.title}</h1>
-          <div className="page-subtitle">{props.subtitle}</div>
+          <p className="page-subtitle">{props.subtitle}</p>
         </div>
         <TopNav />
       </header>
       <section className="console-layout">
         <div className="console-main">{props.children}</div>
-        {props.rail ? <aside className="console-rail">{props.rail}</aside> : null}
+        {props.rail ? (
+          <aside className="console-rail" aria-label="Evidence panel">
+            {props.rail}
+          </aside>
+        ) : null}
       </section>
     </main>
   );

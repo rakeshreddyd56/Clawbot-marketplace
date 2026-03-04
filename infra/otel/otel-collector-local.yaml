@@ -1,0 +1,78 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# OpenTelemetry Collector — Local Development Config
+#
+# Simpler than production: no remote backend, logs to stdout,
+# Prometheus metrics on :8889 for local dashboards.
+# ─────────────────────────────────────────────────────────────────────────────
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        cors:
+          allowed_origins:
+            - "http://localhost:3001"
+            - "http://localhost:3000"
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+  resource:
+    attributes:
+      - key: service.namespace
+        value: clawbot-marketplace
+        action: insert
+      - key: deployment.environment
+        value: local
+        action: insert
+
+exporters:
+  # Print traces/metrics/logs to stdout for dev inspection
+  logging:
+    verbosity: detailed
+
+  # Prometheus endpoint for local Grafana (optional)
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: clawbot
+    send_timestamps: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /health
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging]
+
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, logging]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [logging]
+
+  telemetry:
+    logs:
+      level: info

@@ -580,6 +580,15 @@ export class MarketplaceCore {
     const dispute = this.getDispute(disputeId);
     const contract = this.getContract(dispute.contractId);
 
+    // BUG-HIGH-003: Validate targetAgentId is a party to the dispute contract.
+    // Without this check, a moderator could slash/sanction any arbitrary agent.
+    assertDomain(
+      targetAgentId === contract.requesterAgentId || targetAgentId === contract.workerAgentId,
+      'INVALID_TARGET_AGENT',
+      'Target agent must be a party to the dispute contract.',
+      400
+    );
+
     const escrowAccount = this.escrowAccount(contract.contractId);
     const escrowBalance = this.getBalance(escrowAccount);
 
@@ -769,7 +778,11 @@ export class MarketplaceCore {
   private verifyLeaseToken(leaseId: string, token: string): void {
     const current = this.leaseSecrets.get(leaseId);
     assertDomain(Boolean(current), 'LEASE_TOKEN_MISSING', 'Lease token missing.', 401);
-    assertDomain(current === token, 'LEASE_TOKEN_INVALID', 'Invalid lease token.', 401);
+    const expected = Buffer.from(current!);
+    const provided = Buffer.from(token);
+    // timingSafeEqual requires equal-length buffers; reject mismatched lengths
+    const valid = expected.length === provided.length && crypto.timingSafeEqual(expected, provided);
+    assertDomain(valid, 'LEASE_TOKEN_INVALID', 'Invalid lease token.', 401);
   }
 
   private expireLeaseIfStale(lease: AssignmentLease): AssignmentLease {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ConsoleShell } from '../../components/console-shell';
 import { EvidenceRail } from '../../components/evidence-rail';
 import type { EvidenceItem } from '../../components/evidence-rail';
@@ -30,7 +30,9 @@ export default function AdminPage() {
   const [eligibility, setEligibility] = useState<WorkerEligibility | null>(null);
   const [decisions, setDecisions] = useState<PolicyDecision[]>([]);
   const [message, setMessage] = useState('');
+  const [messageIsError, setMessageIsError] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
+  const [decisionsLoaded, setDecisionsLoaded] = useState(false);
 
   const evidenceItems = useMemo<EvidenceItem[]>(
     () => [
@@ -43,20 +45,22 @@ export default function AdminPage() {
     [agentId, decisions.length, eligibility]
   );
 
-  async function loadDecisions() {
+  const loadDecisions = useCallback(async () => {
     try {
       setLoading('decisions');
       const payload = await bffFetch<{ decisions: PolicyDecision[] }>('policy/decisions');
       setDecisions(payload.decisions.slice(-50).reverse());
+      setDecisionsLoaded(true);
       setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load decisions.');
+      setMessageIsError(true);
     } finally {
       setLoading(null);
     }
-  }
+  }, []);
 
-  async function loadEligibility() {
+  const loadEligibility = useCallback(async () => {
     if (!agentId) return;
     try {
       setLoading('eligibility');
@@ -65,10 +69,11 @@ export default function AdminPage() {
       setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load worker eligibility.');
+      setMessageIsError(true);
     } finally {
       setLoading(null);
     }
-  }
+  }, [agentId]);
 
   return (
     <ConsoleShell
@@ -76,74 +81,114 @@ export default function AdminPage() {
       subtitle="Policy, trust-tier eligibility checks, and operational audit visibility."
       rail={<EvidenceRail title="Admin Evidence Rail" items={evidenceItems} />}
     >
-      <section className="stack">
+      <section className="stack" aria-label="Admin controls">
         <IdentityStrip />
 
         <div className="card">
-          <div className="badge">Worker Eligibility Probe</div>
-          <div className="field-grid">
-            <label>
+          <h2 className="badge">Worker Eligibility Probe</h2>
+          <div className="field-grid" style={{ marginTop: 10 }}>
+            <label htmlFor="admin-agent-id">
               <span>Agent ID</span>
-              <input value={agentId} onChange={(event) => setAgentId(event.target.value)} placeholder="agent_..." />
+              <input
+                id="admin-agent-id"
+                value={agentId}
+                onChange={(event) => setAgentId(event.target.value)}
+                placeholder="agent_..."
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void loadEligibility();
+                }}
+              />
             </label>
           </div>
           <div className="button-row">
-            <button type="button" onClick={loadEligibility} disabled={loading !== null || !agentId}>
-              {loading === 'eligibility' ? 'Checking...' : 'Check eligibility'}
+            <button type="button" onClick={() => void loadEligibility()} disabled={loading !== null || !agentId}>
+              {loading === 'eligibility' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Checking…
+                </>
+              ) : (
+                'Check eligibility'
+              )}
             </button>
           </div>
           {eligibility ? (
-            <div className="kv-grid">
+            <div className="kv-grid" style={{ marginTop: 10 }}>
               <div>
                 <strong>Trust tier</strong>
                 <div>{eligibility.trustTier}</div>
               </div>
               <div>
                 <strong>Bid</strong>
-                <div>{String(eligibility.canBid)}</div>
+                <div>{eligibility.canBid ? 'Allowed' : 'Blocked'}</div>
               </div>
               <div>
                 <strong>Reserve</strong>
-                <div>{String(eligibility.canReserve)}</div>
+                <div>{eligibility.canReserve ? 'Allowed' : 'Blocked'}</div>
               </div>
               <div>
                 <strong>Payout</strong>
-                <div>{String(eligibility.canPayout)}</div>
+                <div>{eligibility.canPayout ? 'Allowed' : 'Blocked'}</div>
               </div>
             </div>
           ) : (
-            <p className="muted-text">Enter an agent ID to inspect tier-derived worker rights.</p>
+            <p className="muted-text" style={{ marginTop: 8 }}>
+              Enter an agent ID to inspect tier-derived worker rights.
+            </p>
           )}
         </div>
 
         <div className="card">
-          <div className="badge">Policy Decisions</div>
-          <div className="button-row">
-            <button type="button" onClick={loadDecisions} disabled={loading !== null}>
-              {loading === 'decisions' ? 'Loading...' : 'Load policy log'}
+          <h2 className="badge">Policy Decisions</h2>
+          <div className="button-row" style={{ marginTop: 10 }}>
+            <button type="button" onClick={() => void loadDecisions()} disabled={loading !== null}>
+              {loading === 'decisions' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Loading…
+                </>
+              ) : (
+                'Load policy log'
+              )}
             </button>
           </div>
-          {decisions.length > 0 ? (
-            <div className="stack-tight">
+          {decisionsLoaded && decisions.length === 0 ? (
+            <div className="empty-state" role="status" style={{ textAlign: 'left', paddingLeft: 0 }}>
+              No policy decisions recorded.
+              <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
+                Policy decisions will appear here as agents perform actions.
+              </div>
+            </div>
+          ) : decisions.length > 0 ? (
+            <div className="stack-tight" style={{ marginTop: 10 }} role="list" aria-label="Policy decision log">
               {decisions.map((decision) => (
-                <div key={decision.decisionId} className="readiness-row">
+                <div key={decision.decisionId} className="readiness-row" role="listitem">
                   <div>
                     <strong>{decision.action}</strong>
-                    <div className="muted-text">
+                    <div className="muted-text" style={{ fontSize: 12 }}>
                       {decision.decisionId} · {decision.policyVersion}
                     </div>
                   </div>
-                  <span className={`pill ${decision.allow ? 'pill-ok' : 'pill-bad'}`}>{decision.allow ? 'ALLOW' : 'DENY'}</span>
+                  <span
+                    className={`pill ${decision.allow ? 'pill-ok' : 'pill-bad'}`}
+                    role="status"
+                    aria-label={`${decision.action}: ${decision.allow ? 'allowed' : 'denied'}`}
+                  >
+                    {decision.allow ? 'ALLOW' : 'DENY'}
+                  </span>
                 </div>
               ))}
             </div>
-          ) : (
-            <p className="muted-text">No policy decisions loaded.</p>
-          )}
+          ) : null}
         </div>
 
         <RealtimeFeed channels={['task.*', 'contract.*', 'dispute.*', 'wallet.*', 'sanction.*']} />
-        {message ? <div className="card">{message}</div> : null}
+
+        {message ? (
+          <div className={`callout ${messageIsError ? 'bad' : 'ok'}`} role="alert" aria-live="assertive">
+            {message}
+          </div>
+        ) : null}
       </section>
     </ConsoleShell>
   );

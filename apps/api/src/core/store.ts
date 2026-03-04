@@ -24,6 +24,7 @@ export function createStore(): Store {
     ledger: [],
     balances: new Map(),
     deliverySecrets: new Map(),
-    taskMilestoneNames: new Map()
+    taskMilestoneNames: new Map(),
+    processedWebhookEventIds: new Set()
   };
 }

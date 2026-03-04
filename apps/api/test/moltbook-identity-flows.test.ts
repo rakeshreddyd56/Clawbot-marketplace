@@ -772,7 +772,8 @@ describe('TASK-TEST-001: Moltbook identity flows', () => {
     });
 
     expect(res.statusCode).toBe(403);
-    expect(res.json<{ error: { code: string } }>().error.code).toBe('ROLE_FORBIDDEN');
+    // BUG-MED-003: now enforced by PolicyDecisionService (POLICY_DENY) instead of assertDomain (ROLE_FORBIDDEN)
+    expect(res.json<{ error: { code: string } }>().error.code).toBe('POLICY_DENY');
   });
 
   // ─────────────────────────────────────────────────────────────────────────────

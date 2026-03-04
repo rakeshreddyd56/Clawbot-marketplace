@@ -1,31 +1,275 @@
+# ─────────────────────────────────────────────
+# Clawbot Marketplace — OpenTelemetry Collector
+#
+# Receives: OTLP gRPC (4317) + OTLP HTTP (4318)
+# Processes: batch, memory_limiter, resource detection,
+#            Clawbot domain attribute enrichment
+# Exports:   Prometheus (8889), logging (stdout),
+#            OTLP forward to backend (Tempo/Jaeger)
+#
+# Domain metrics tracked:
+#   - clawbot.request.latency (p50/p95/p99 via spanmetrics)
+#   - clawbot.request.error_rate
+#   - clawbot.escrow.operations (lock/release/slash)
+#   - clawbot.identity.verification_latency
+#   - clawbot.websocket.connections
+#   - clawbot.lease.expiry_events
+#   - clawbot.task.lifecycle (posted/assigned/completed/expired)
+#   - clawbot.dispute.resolutions
+#   - clawbot.audit.events_total
+# ─────────────────────────────────────────────
+
+# ── OtelCollector ConfigMap ───────────────────
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: otel-collector-config
   namespace: clawbot-marketplace
+  labels:
+    app: otel-collector
+    app.kubernetes.io/part-of: clawbot-marketplace
 data:
   otel-collector.yaml: |
     receivers:
       otlp:
         protocols:
           grpc:
+            endpoint: 0.0.0.0:4317
+            max_recv_msg_size_mib: 4
           http:
+            endpoint: 0.0.0.0:4318
+
     processors:
-      batch: {}
+      memory_limiter:
+        check_interval: 5s
+        limit_percentage: 80
+        spike_limit_percentage: 25
+
+      batch:
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+        timeout: 5s
+
+      resource:
+        attributes:
+          - key: service.namespace
+            value: clawbot-marketplace
+            action: insert
+          - key: deployment.environment
+            value: production
+            action: insert
+          - key: clawbot.version
+            value: v1
+            action: insert
+
     exporters:
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        namespace: clawbot
+        send_timestamps: true
+        metric_expiration: 5m
+        enable_open_metrics: true
+        resource_to_telemetry_conversion:
+          enabled: true
+
       logging:
         verbosity: normal
+        sampling_initial: 5
+        sampling_thereafter: 200
+
+      otlp/backend:
+        endpoint: ${env:OTEL_BACKEND_ENDPOINT}
+        tls:
+          insecure: false
+        sending_queue:
+          enabled: true
+          num_consumers: 4
+          queue_size: 1000
+        retry_on_failure:
+          enabled: true
+          initial_interval: 5s
+          max_interval: 30s
+          max_elapsed_time: 300s
+
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:13133
+        path: /health
+      pprof:
+        endpoint: 0.0.0.0:1777
+      zpages:
+        endpoint: 0.0.0.0:55679
+
     service:
+      extensions: [health_check, pprof, zpages]
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [batch]
-          exporters: [logging]
+          processors: [memory_limiter, resource, batch]
+          exporters: [logging, otlp/backend]
+
         metrics:
           receivers: [otlp]
-          processors: [batch]
-          exporters: [logging]
+          processors: [memory_limiter, resource, batch]
+          exporters: [prometheus, logging]
+
         logs:
           receivers: [otlp]
-          processors: [batch]
+          processors: [memory_limiter, resource, batch]
           exporters: [logging]
+
+      telemetry:
+        logs:
+          level: info
+          encoding: json
+        metrics:
+          level: basic
+          address: 0.0.0.0:8888
+---
+# ── OtelCollector Deployment ──────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: clawbot-marketplace
+  labels:
+    app: otel-collector
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: otel-collector
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+        app.kubernetes.io/part-of: clawbot-marketplace
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8888"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: clawbot-workload
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.116.0
+          args:
+            - "--config=/conf/otel-collector.yaml"
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+              protocol: TCP
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            - name: metrics
+              containerPort: 8888
+              protocol: TCP
+            - name: prom-export
+              containerPort: 8889
+              protocol: TCP
+            - name: health
+              containerPort: 13133
+              protocol: TCP
+          env:
+            - name: OTEL_BACKEND_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: clawbot-observability-secrets
+                  key: OTEL_BACKEND_ENDPOINT
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: otel-config
+              mountPath: /conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: otel-config
+          configMap:
+            name: otel-collector-config
+            items:
+              - key: otel-collector.yaml
+                path: otel-collector.yaml
+        - name: tmp
+          emptyDir: {}
+---
+# ── OtelCollector Service ─────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: clawbot-marketplace
+  labels:
+    app: otel-collector
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
+    - name: metrics
+      port: 8888
+      targetPort: metrics
+      protocol: TCP
+    - name: prom-export
+      port: 8889
+      targetPort: prom-export
+      protocol: TCP
+    - name: health
+      port: 13133
+      targetPort: health
+      protocol: TCP

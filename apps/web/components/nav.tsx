@@ -15,9 +15,14 @@ export function TopNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="nav">
+    <nav className="nav" aria-label="Main navigation">
       {ROUTES.map((route) => (
-        <Link key={route.href} href={route.href} className={pathname === route.href ? 'active' : ''}>
+        <Link
+          key={route.href}
+          href={route.href}
+          className={pathname === route.href ? 'active' : ''}
+          aria-current={pathname === route.href ? 'page' : undefined}
+        >
           {route.label}
         </Link>
       ))}

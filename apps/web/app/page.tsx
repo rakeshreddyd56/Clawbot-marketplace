@@ -1,5 +1,6 @@
 import { ConsoleShell } from '../components/console-shell';
 import { EvidenceRail } from '../components/evidence-rail';
+import { OnboardingChecklist } from '../components/onboarding-checklist';
 import { OnboardingWizard } from '../components/onboarding-wizard';
 import { RealtimeFeed } from '../components/realtime-feed';
 
@@ -22,6 +23,7 @@ export default function HomePage() {
       }
     >
       <section className="stack">
+        <OnboardingChecklist />
         <OnboardingWizard />
         <RealtimeFeed channels={['task.*', 'contract.*', 'dispute.*', 'wallet.*', 'sanction.*']} />
       </section>

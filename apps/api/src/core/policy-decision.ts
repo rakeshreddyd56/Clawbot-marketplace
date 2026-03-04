@@ -17,6 +17,8 @@ const KNOWN_ACTIONS = new Set([
   'task.reserve',
   'task.heartbeat',
   'task.cancel',
+  'task.accept',
+  'task.eligibility.read',
   'task.scope.read',
   'bid.create',
   'contract.read',
@@ -25,9 +27,13 @@ const KNOWN_ACTIONS = new Set([
   'contract.milestone.accept',
   'artifact.upload_url.create',
   'artifact.finalize',
+  'artifact.signature.preview',
   'dispute.open',
+  'dispute.read',
+  'dispute.evidence.read',
   'dispute.appeal',
   'dispute.resolve',
+  'vault.token.create',
   'wallet.topup',
   'wallet.payout',
   'wallet.ledger.read',
@@ -38,10 +44,16 @@ const KNOWN_ACTIONS = new Set([
 ]);
 
 const CONTEXT_ALLOWLIST: Record<string, string[]> = {
+  'task.accept': ['taskId', 'leaseId'],
+  'task.eligibility.read': ['taskId'],
   'task.scope.read': ['taskId', 'leaseId'],
   'contract.milestone.deliver': ['contractId', 'milestoneId'],
   'contract.milestone.accept': ['contractId', 'milestoneId'],
+  'artifact.signature.preview': ['contractId', 'milestoneId'],
+  'dispute.read': ['disputeId'],
+  'dispute.evidence.read': ['disputeId'],
   'dispute.resolve': ['disputeId'],
+  'vault.token.create': ['taskId', 'leaseId', 'dataRef'],
   'reputation.read': ['agentId'],
   'payments.webhook': ['eventType']
 };
@@ -90,10 +102,13 @@ export class PolicyDecisionService {
         'task.post',
         'task.list',
         'task.cancel',
+        'task.accept',
         'task.scope.read',
         'contract.read',
         'contract.milestone.accept',
         'dispute.open',
+        'dispute.read',
+        'dispute.evidence.read',
         'dispute.appeal',
         'wallet.topup',
         'wallet.payout',
@@ -104,11 +119,13 @@ export class PolicyDecisionService {
       ].includes(action);
     }
 
+    // worker role
     return [
       'agent.profile.read',
       'task.list',
       'task.reserve',
       'task.heartbeat',
+      'task.eligibility.read',
       'task.scope.read',
       'bid.create',
       'contract.read',
@@ -116,8 +133,12 @@ export class PolicyDecisionService {
       'contract.milestone.deliver',
       'artifact.upload_url.create',
       'artifact.finalize',
+      'artifact.signature.preview',
       'dispute.open',
+      'dispute.read',
+      'dispute.evidence.read',
       'dispute.appeal',
+      'vault.token.create',
       'wallet.payout',
       'wallet.ledger.read',
       'reputation.read',
@@ -127,10 +148,16 @@ export class PolicyDecisionService {
   }
 
   private record(input: PolicyEvalInput, allow: boolean, reason: string): PolicyDecision {
+    // Extract the first context value that looks like an entity ID for filtering
+    const contextValues = Object.values(input.context ?? {});
+    const entityId = contextValues.length > 0 ? String(contextValues[0]) : undefined;
+
     const decision = PolicyDecisionSchema.parse({
       decisionId: uid('policy_decision'),
       policyVersion: this.policyVersion,
       action: input.action,
+      actorAgentId: input.actor.actorAgentId,
+      entityId,
       allow,
       reason,
       contextHash: sha256(JSON.stringify({ actor: input.actor, context: input.context ?? {} })),

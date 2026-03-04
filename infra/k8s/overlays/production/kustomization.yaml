@@ -1,0 +1,168 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Production Overlay
+#
+# Applies on top of infra/k8s/base/ with production-specific hardening:
+#   - Pinned image SHAs (never :latest in production)
+#   - Higher replica counts
+#   - Stricter resource limits
+#   - Production namespace
+#   - Anti-affinity rules (spread pods across AZs)
+#
+# Deploy:
+#   kubectl apply -k infra/k8s/overlays/production
+#
+# Before deploying:
+#   1. Update image newName/newTag to the exact SHA from the release CI build
+#   2. Verify K8s secrets are populated in the production namespace
+#   3. Run: kubectl diff -k infra/k8s/overlays/production
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: clawbot-marketplace
+
+resources:
+  - ../../base
+
+commonLabels:
+  environment: production
+  app.kubernetes.io/environment: production
+
+# Production image tags — ALWAYS pin to a specific SHA, never :latest
+# Update these after each successful main branch CI build.
+images:
+  - name: ghcr.io/clawbot/api-gateway-bff
+    newTag: "sha-REPLACE_WITH_COMMIT_SHA"  # e.g. sha-abc1234
+  - name: ghcr.io/clawbot/web-console
+    newTag: "sha-REPLACE_WITH_COMMIT_SHA"
+  - name: ghcr.io/clawbot/temporal-worker
+    newTag: "sha-REPLACE_WITH_COMMIT_SHA"
+  - name: ghcr.io/clawbot/execution-orchestrator
+    newTag: "sha-REPLACE_WITH_COMMIT_SHA"
+
+patches:
+  # ── Production replica counts (higher HA) ────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway-bff
+      spec:
+        replicas: 3
+    target:
+      kind: Deployment
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: web-console
+      spec:
+        replicas: 3
+    target:
+      kind: Deployment
+      name: web-console
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: policy-decision-service
+      spec:
+        replicas: 3
+    target:
+      kind: Deployment
+      name: policy-decision-service
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: execution-orchestrator
+      spec:
+        replicas: 3
+    target:
+      kind: Deployment
+      name: execution-orchestrator
+
+  # ── Production resource limits (tighter memory ceiling) ───────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway-bff
+      spec:
+        template:
+          spec:
+            containers:
+              - name: api
+                resources:
+                  requests:
+                    cpu: 200m
+                    memory: 384Mi
+                  limits:
+                    cpu: 1000m
+                    memory: 768Mi
+    target:
+      kind: Deployment
+      name: api-gateway-bff
+
+  # ── Production HPA — wider scaling range ─────────────────────────────────
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: api-gateway-bff
+      spec:
+        minReplicas: 3
+        maxReplicas: 20
+    target:
+      kind: HorizontalPodAutoscaler
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: web-console
+      spec:
+        minReplicas: 3
+        maxReplicas: 15
+    target:
+      kind: HorizontalPodAutoscaler
+      name: web-console
+
+  # ── Production PDB — strict minimum available ────────────────────────────
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: api-gateway-bff
+      spec:
+        minAvailable: 2
+    target:
+      kind: PodDisruptionBudget
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: web-console
+      spec:
+        minAvailable: 2
+    target:
+      kind: PodDisruptionBudget
+      name: web-console
+
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: policy-decision-service
+      spec:
+        minAvailable: 2
+    target:
+      kind: PodDisruptionBudget
+      name: policy-decision-service

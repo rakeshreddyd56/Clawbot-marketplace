@@ -42,6 +42,7 @@ export type AppServices = {
 
 export type CreateAppOptions = {
   services?: Partial<AppServices>;
+  corsOrigins?: string[];
 };
 
 const DEFAULT_AUDIENCE = 'clawbot.marketplace.local';
@@ -445,8 +446,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const services = createServices(options.services);
   const app = Fastify({ logger: false });
 
+  // BUG-HIGH-001: Restrict CORS to explicit allowlist instead of reflecting any origin.
+  // origin: true (wildcard) with credentials: true enables CSRF on financial endpoints.
+  const allowedOrigins = options.corsOrigins
+    ?? (process.env.CORS_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean))
+    ?? ['http://localhost:3001'];
+
   await app.register(cors, {
-    origin: true,
+    origin: allowedOrigins,
     credentials: true
   });
 
@@ -621,8 +628,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/v1/tasks/:taskId/eligibility', async (request) => {
     const actor = auth(request);
     const { taskId } = idParamsSchema.parse(request.params);
-
-    assertDomain(actor.role === 'worker' || actor.role === 'admin', 'ROLE_FORBIDDEN', 'Task eligibility is worker-scoped.', 403);
+    enforcePolicy(services, actor, 'task.eligibility.read', { taskId });
 
     const workerId = actor.role === 'admin' ? String((request.query as Record<string, unknown>)?.agentId ?? '') || actor.actorAgentId : actor.actorAgentId;
     return services.identityService.getTaskEligibility(workerId, taskId);
@@ -688,9 +694,10 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.post('/v1/tasks/:taskId/accept', async (request) => {
     const actor = auth(request);
-    enforceFreshIdentity(services, actor);
     const { taskId } = idParamsSchema.parse(request.params);
     const body = reserveAcceptBodySchema.parse(request.body);
+    enforcePolicy(services, actor, 'task.accept', { taskId, leaseId: body.leaseId });
+    enforceFreshIdentity(services, actor);
     return services.marketplace.acceptTask(actor, taskId, body.leaseId, body.leaseToken);
   });
 
@@ -717,6 +724,11 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const actor = auth(request);
     const { taskId } = idParamsSchema.parse(request.params);
     const body = vaultTokenBodySchema.parse(request.body);
+    enforcePolicy(services, actor, 'vault.token.create', {
+      taskId,
+      leaseId: body.leaseId,
+      dataRef: body.dataRef
+    });
 
     services.marketplace.getScopeForLease(actor, taskId, body.leaseId, body.leaseToken);
 
@@ -738,10 +750,12 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.post('/v1/contracts/:contractId/signature-preview', async (request) => {
     const actor = auth(request);
-    assertRole(actor, ['worker', 'admin']);
-
     const { contractId } = contractParamsSchema.parse(request.params);
     const body = signaturePreviewBodySchema.parse(request.body);
+    enforcePolicy(services, actor, 'artifact.signature.preview', {
+      contractId,
+      milestoneId: body.milestoneId
+    });
 
     const contract = services.marketplace.getContractById(contractId);
     assertContractAccess(actor, contract);
@@ -867,6 +881,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/v1/disputes/:disputeId', async (request) => {
     const actor = auth(request);
     const { disputeId } = disputeParamsSchema.parse(request.params);
+    enforcePolicy(services, actor, 'dispute.read', { disputeId });
     const dispute = services.marketplace.getDisputeById(disputeId);
 
     if (actor.role === 'admin' || actor.role === 'moderator') {
@@ -881,6 +896,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.get('/v1/disputes/:disputeId/evidence', async (request) => {
     const actor = auth(request);
     const { disputeId } = disputeParamsSchema.parse(request.params);
+    enforcePolicy(services, actor, 'dispute.evidence.read', { disputeId });
     const dispute = services.marketplace.getDisputeById(disputeId);
     const contract = services.marketplace.getContractById(dispute.contractId);
     assertContractAccess(actor, contract);
@@ -894,13 +910,26 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       ...services.marketplace.listEvents(contract.taskId)
     ];
 
+    // BUG-MED-002: Filter policy decisions to dispute parties only.
+    // Admins and moderators see all decisions; dispute parties only see
+    // decisions where the actor is a party or the entity is this dispute/contract.
+    const isPrivileged = actor.role === 'admin' || actor.role === 'moderator';
+    const policyDecisions = isPrivileged
+      ? services.store.policyDecisions.slice(-50)
+      : services.store.policyDecisions.filter(d =>
+          d.actorAgentId === contract.requesterAgentId ||
+          d.actorAgentId === contract.workerAgentId ||
+          d.entityId === dispute.disputeId ||
+          d.entityId === contract.contractId
+        ).slice(-50);
+
     return {
       dispute,
       contract,
       evidencePack,
       artifacts,
       events,
-      policyDecisions: services.store.policyDecisions.slice(-50)
+      policyDecisions
     };
   });
 

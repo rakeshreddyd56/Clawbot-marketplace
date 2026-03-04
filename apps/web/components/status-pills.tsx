@@ -1,21 +1,31 @@
-import type { ReactNode } from 'react';
+'use client';
+
+import { memo, type ReactNode } from 'react';
 
 type Tone = 'ok' | 'warn' | 'bad' | 'info';
 
-function Pill({ tone = 'info', children }: { tone?: Tone; children: ReactNode }) {
-  return <span className={`pill pill-${tone}`}>{children}</span>;
-}
+const Pill = memo(function Pill({ tone = 'info', children }: { tone?: Tone; children: ReactNode }) {
+  return (
+    <span className={`pill pill-${tone}`} role="status">
+      {children}
+    </span>
+  );
+});
 
-export function TrustTierPill({ tier }: { tier?: 'A' | 'B' | 'C' }) {
+export const TrustTierPill = memo(function TrustTierPill({ tier }: { tier?: 'A' | 'B' | 'C' }) {
   if (!tier) {
     return <Pill tone="info">Trust Tier: unknown</Pill>;
   }
 
   const tone = tier === 'A' ? 'ok' : tier === 'B' ? 'warn' : 'bad';
   return <Pill tone={tone}>Trust Tier {tier}</Pill>;
-}
+});
 
-export function FreshnessPill(props: { expired?: boolean; needsReverifyPrompt?: boolean; secondsToExpiry?: number }) {
+export const FreshnessPill = memo(function FreshnessPill(props: {
+  expired?: boolean;
+  needsReverifyPrompt?: boolean;
+  secondsToExpiry?: number;
+}) {
   if (props.expired) {
     return <Pill tone="bad">Verification expired</Pill>;
   }
@@ -29,13 +39,13 @@ export function FreshnessPill(props: { expired?: boolean; needsReverifyPrompt?: 
   }
 
   return <Pill tone="info">Freshness unknown</Pill>;
-}
+});
 
-export function PolicyDecisionPill({ decisionId }: { decisionId?: string }) {
+export const PolicyDecisionPill = memo(function PolicyDecisionPill({ decisionId }: { decisionId?: string }) {
   return <Pill tone="info">Policy Decision {decisionId ?? 'runtime enforced'}</Pill>;
-}
+});
 
-export function SignaturePill({ valid }: { valid?: boolean }) {
+export const SignaturePill = memo(function SignaturePill({ valid }: { valid?: boolean }) {
   if (valid === true) {
     return <Pill tone="ok">Signature valid</Pill>;
   }
@@ -45,9 +55,9 @@ export function SignaturePill({ valid }: { valid?: boolean }) {
   }
 
   return <Pill tone="warn">Signature pending</Pill>;
-}
+});
 
-export function HeartbeatPill({ expiresAt }: { expiresAt?: string }) {
+export const HeartbeatPill = memo(function HeartbeatPill({ expiresAt }: { expiresAt?: string }) {
   if (!expiresAt) {
     return <Pill tone="warn">Lease heartbeat idle</Pill>;
   }
@@ -55,4 +65,4 @@ export function HeartbeatPill({ expiresAt }: { expiresAt?: string }) {
   const seconds = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
   const tone: Tone = seconds > 60 ? 'ok' : seconds > 15 ? 'warn' : 'bad';
   return <Pill tone={tone}>Lease heartbeat {seconds}s</Pill>;
-}
+});

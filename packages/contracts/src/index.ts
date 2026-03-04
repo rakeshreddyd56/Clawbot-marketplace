@@ -242,6 +242,8 @@ export const PolicyDecisionSchema = z.object({
   decisionId: z.string(),
   policyVersion: z.string(),
   action: z.string(),
+  actorAgentId: z.string(),
+  entityId: z.string().optional(),
   allow: z.boolean(),
   reason: z.string(),
   contextHash: z.string(),

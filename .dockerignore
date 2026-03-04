@@ -1,0 +1,48 @@
+# ─── Git ──────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ─── Node ─────────────────────────────────────
+node_modules
+**/node_modules
+npm-debug.log*
+yarn-error.log*
+
+# ─── Build outputs (re-built in Docker) ───────
+**/dist
+**/.next
+**/tsconfig.tsbuildinfo
+
+# ─── Test artifacts ───────────────────────────
+**/coverage
+**/__snapshots__
+**/test-results
+
+# ─── IDE / editor ─────────────────────────────
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# ─── Secrets / env files ──────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# ─── Claude agent coordination ────────────────
+.claude/
+
+# ─── Documentation (not needed in image) ──────
+docs/
+*.md
+!apps/*/README.md
+
+# ─── Local infra files ────────────────────────
+docker-compose*.yml
+infra/

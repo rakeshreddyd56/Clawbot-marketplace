@@ -1,0 +1,155 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Staging Overlay
+#
+# Applies on top of infra/k8s/base/ with staging-specific overrides:
+#   - Reduced replica counts (cost saving)
+#   - staging image tags (branch: develop or release/*)
+#   - staging namespace label
+#   - Relaxed resource limits (dev iteration speed)
+#
+# Deploy:
+#   kubectl apply -k infra/k8s/overlays/staging
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: clawbot-marketplace-staging
+
+resources:
+  - ../../base
+
+namePrefix: ""
+nameSuffix: ""
+
+commonLabels:
+  environment: staging
+  app.kubernetes.io/environment: staging
+
+# Staging image tags — set by CI after a successful develop branch build
+images:
+  - name: ghcr.io/clawbot/api-gateway-bff
+    newTag: develop
+  - name: ghcr.io/clawbot/web-console
+    newTag: develop
+  - name: ghcr.io/clawbot/temporal-worker
+    newTag: develop
+  - name: ghcr.io/clawbot/execution-orchestrator
+    newTag: develop
+
+patches:
+  # ── Reduce replicas in staging to save cost ────────────────────────────────
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: api-gateway-bff
+      spec:
+        replicas: 1
+    target:
+      kind: Deployment
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: web-console
+      spec:
+        replicas: 1
+    target:
+      kind: Deployment
+      name: web-console
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: policy-decision-service
+      spec:
+        replicas: 1
+    target:
+      kind: Deployment
+      name: policy-decision-service
+
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: execution-orchestrator
+      spec:
+        replicas: 1
+    target:
+      kind: Deployment
+      name: execution-orchestrator
+
+  # ── Relax HPA min replicas in staging ────────────────────────────────────
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: api-gateway-bff
+      spec:
+        minReplicas: 1
+        maxReplicas: 3
+    target:
+      kind: HorizontalPodAutoscaler
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: web-console
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: web-console
+
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: policy-decision-service
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: policy-decision-service
+
+  - patch: |-
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: execution-orchestrator
+      spec:
+        minReplicas: 1
+        maxReplicas: 2
+    target:
+      kind: HorizontalPodAutoscaler
+      name: execution-orchestrator
+
+  # ── Relax PDB minAvailable in staging (allow full restart) ────────────────
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: api-gateway-bff
+      spec:
+        minAvailable: 0
+    target:
+      kind: PodDisruptionBudget
+      name: api-gateway-bff
+
+  - patch: |-
+      apiVersion: policy/v1
+      kind: PodDisruptionBudget
+      metadata:
+        name: web-console
+      spec:
+        minAvailable: 0
+    target:
+      kind: PodDisruptionBudget
+      name: web-console

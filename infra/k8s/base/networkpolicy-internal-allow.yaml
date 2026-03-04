@@ -1,0 +1,178 @@
+# ─────────────────────────────────────────────
+# Clawbot Marketplace — Internal Network Policies
+#
+# The default-deny policy blocks ALL ingress and egress.
+# These policies selectively re-open intra-namespace paths:
+#   1. Allow ingress to all pods from within the namespace
+#   2. Allow egress to all pods within the namespace
+#   3. Allow egress from all pods to the OtelCollector (OTLP)
+#   4. Allow ingress to OtelCollector from all namespace pods
+#
+# Service-to-service paths (all within clawbot-marketplace):
+#   web-console        → api-gateway-bff    (port 80)
+#   api-gateway-bff    → policy-decision-service (port 8181)
+#   api-gateway-bff    → execution-orchestrator  (port 8080)
+#   *                  → otel-collector     (port 4317, 4318)
+# ─────────────────────────────────────────────
+
+# ── Allow all intra-namespace ingress ─────────
+# Any pod in clawbot-marketplace can receive traffic from
+# any other pod in the same namespace. This is the standard
+# "east-west" policy for service meshes and monorepo services.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace-ingress
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector: {}     # applies to ALL pods in the namespace
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}   # any pod in the SAME namespace
+---
+# ── Allow all intra-namespace egress ──────────
+# All pods can initiate connections to other pods in the same
+# namespace. Combined with the default-deny, this ensures that
+# external egress still requires the restricted label.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-intra-namespace-egress
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector: {}   # any pod in the SAME namespace
+---
+# ── Allow OtelCollector ingress from all pods ──
+# Explicit policy for OTLP gRPC (4317) and HTTP (4318) ports
+# so that every service can export telemetry unconditionally.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-otel-collector-ingress
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector:
+    matchLabels:
+      app: otel-collector
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector: {}   # any pod in the namespace
+      ports:
+        - protocol: TCP
+          port: 4317        # OTLP gRPC
+        - protocol: TCP
+          port: 4318        # OTLP HTTP
+        - protocol: TCP
+          port: 8888        # OtelCollector internal metrics
+---
+# ── Allow OPA / policy-decision-service ingress ─
+# Explicit policy: only api-gateway-bff may call OPA
+# (defense-in-depth on top of the intra-namespace allow).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-opa-ingress-from-api
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector:
+    matchLabels:
+      app: policy-decision-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway-bff
+      ports:
+        - protocol: TCP
+          port: 8181
+    # Also allow scraping from Prometheus (running in monitoring namespace)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 8181
+        - protocol: TCP
+          port: 8282
+---
+# ── Allow ingress to api-gateway-bff from web-console ──
+# The web-console's BFF proxy calls the API over port 80 (Service).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-ingress-from-web
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway-bff
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: web-console
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 3000
+---
+# ── Allow external ingress to web-console via LoadBalancer/Ingress ─
+# The ingress controller (in a separate namespace) forwards HTTP/HTTPS.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-console-ingress-from-ingress-controller
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/part-of: clawbot-marketplace
+spec:
+  podSelector:
+    matchLabels:
+      app: web-console
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3001

@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { ConsoleShell } from '../../components/console-shell';
 import { EvidenceRail } from '../../components/evidence-rail';
 import type { EvidenceItem } from '../../components/evidence-rail';
@@ -32,7 +32,10 @@ export default function ModeratorPage() {
   const [queue, setQueue] = useState<Array<{ eventType: string; entityId: string; timestamp: string }>>([]);
   const [evidence, setEvidence] = useState<EvidencePayload | null>(null);
   const [message, setMessage] = useState('');
+  const [messageIsError, setMessageIsError] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
+  const [disputeIdError, setDisputeIdError] = useState('');
+  const [queueLoaded, setQueueLoaded] = useState(false);
 
   const evidenceItems = useMemo<EvidenceItem[]>(
     () => [
@@ -45,7 +48,16 @@ export default function ModeratorPage() {
     [disputeId, evidence]
   );
 
-  async function loadQueue() {
+  function validateDisputeId(): boolean {
+    if (!disputeId.trim()) {
+      setDisputeIdError('Dispute ID is required.');
+      return false;
+    }
+    setDisputeIdError('');
+    return true;
+  }
+
+  const loadQueue = useCallback(async () => {
     try {
       setLoading('queue');
       const all = await bffFetch<{ events: Array<{ eventType: string; entityId: string; timestamp: string }> }>('events');
@@ -54,6 +66,7 @@ export default function ModeratorPage() {
         .slice(-25)
         .reverse();
       setQueue(cases);
+      setQueueLoaded(true);
       if (!disputeId) {
         const opened = cases.find((event) => event.eventType === 'dispute.opened');
         if (opened) {
@@ -63,26 +76,29 @@ export default function ModeratorPage() {
       setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load dispute queue.');
+      setMessageIsError(true);
     } finally {
       setLoading(null);
     }
-  }
+  }, [disputeId]);
 
-  async function loadEvidence() {
-    if (!disputeId) return;
+  const loadEvidence = useCallback(async () => {
+    if (!validateDisputeId()) return;
     try {
       setLoading('evidence');
       const payload = await bffFetch<EvidencePayload>(`disputes/${disputeId}/evidence`);
       setEvidence(payload);
       setMessage(`Evidence loaded for ${disputeId}.`);
+      setMessageIsError(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load evidence.');
+      setMessageIsError(true);
     } finally {
       setLoading(null);
     }
-  }
+  }, [disputeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function resolveDispute() {
+  const resolveDispute = useCallback(async () => {
     if (!disputeId || !targetAgentId) return;
     try {
       setLoading('resolve');
@@ -93,14 +109,16 @@ export default function ModeratorPage() {
           targetAgentId
         })
       });
-      setMessage(`Dispute ${disputeId} resolved with ruling ${ruling}.`);
+      setMessage(`Dispute ${disputeId} resolved with ruling "${ruling}".`);
+      setMessageIsError(false);
       await loadEvidence();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Dispute resolve failed.');
+      setMessageIsError(true);
     } finally {
       setLoading(null);
     }
-  }
+  }, [disputeId, targetAgentId, ruling, loadEvidence]);
 
   return (
     <ConsoleShell
@@ -108,66 +126,132 @@ export default function ModeratorPage() {
       subtitle="SLA-prioritized dispute queue with evidence-first case review and sanction-linked rulings."
       rail={<EvidenceRail title="Moderator Evidence Rail" items={evidenceItems} />}
     >
-      <section className="stack">
+      <section className="stack" aria-label="Moderator controls">
         <IdentityStrip signatureValid={evidence?.artifacts.every((item) => item.validationStatus === 'VALID')} />
 
         <div className="card">
-          <div className="badge">Dispute Queue</div>
-          <div className="button-row">
-            <button type="button" onClick={loadQueue} disabled={loading !== null}>
-              {loading === 'queue' ? 'Loading queue...' : 'Load queue'}
+          <h2 className="badge">Dispute Queue</h2>
+          <div className="button-row" style={{ marginTop: 10 }}>
+            <button type="button" onClick={() => void loadQueue()} disabled={loading !== null}>
+              {loading === 'queue' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Loading queue…
+                </>
+              ) : (
+                'Load queue'
+              )}
             </button>
           </div>
-          {queue.length > 0 ? (
-            <div className="stack-tight">
+          {queueLoaded && queue.length === 0 ? (
+            <div className="empty-state" role="status" style={{ textAlign: 'left', paddingLeft: 0 }}>
+              No disputes in queue.
+              <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
+                Dispute events will appear here once they are opened.
+              </div>
+            </div>
+          ) : queue.length > 0 ? (
+            <div className="stack-tight" style={{ marginTop: 10 }} role="list" aria-label="Dispute queue">
               {queue.map((event, index) => (
                 <button
                   key={`${event.entityId}-${index}`}
                   type="button"
-                  className="list-button"
-                  onClick={() => setDisputeId(event.entityId)}
+                  className={`list-button ${disputeId === event.entityId ? 'selected' : ''}`}
+                  onClick={() => {
+                    setDisputeId(event.entityId);
+                    if (disputeIdError) setDisputeIdError('');
+                  }}
+                  aria-pressed={disputeId === event.entityId}
+                  aria-label={`Select dispute ${event.entityId} — ${event.eventType}`}
+                  role="listitem"
                 >
                   <span>{event.eventType}</span>
-                  <span className="muted-text">{event.entityId}</span>
+                  <span className="muted-text" style={{ fontSize: 12 }}>
+                    {event.entityId}
+                  </span>
                 </button>
               ))}
             </div>
-          ) : (
-            <p className="muted-text">No disputes loaded.</p>
-          )}
+          ) : null}
         </div>
 
         <div className="card">
-          <div className="badge">Evidence First</div>
-          <div className="field-grid">
-            <label>
+          <h2 className="badge">Evidence First</h2>
+          <div className="field-grid" style={{ marginTop: 10 }}>
+            <label htmlFor="mod-dispute-id">
               <span>Dispute ID</span>
-              <input value={disputeId} onChange={(event) => setDisputeId(event.target.value)} placeholder="dispute_..." />
+              <input
+                id="mod-dispute-id"
+                value={disputeId}
+                onChange={(event) => {
+                  setDisputeId(event.target.value);
+                  if (disputeIdError) setDisputeIdError('');
+                }}
+                onBlur={validateDisputeId}
+                placeholder="dispute_..."
+                aria-required="true"
+                aria-describedby={disputeIdError ? 'dispute-id-error' : undefined}
+                aria-invalid={disputeIdError ? 'true' : 'false'}
+              />
+              {disputeIdError ? (
+                <p id="dispute-id-error" className="field-error" role="alert">
+                  {disputeIdError}
+                </p>
+              ) : null}
             </label>
-            <label>
+            <label htmlFor="mod-target-agent">
               <span>Target agent</span>
-              <input value={targetAgentId} onChange={(event) => setTargetAgentId(event.target.value)} placeholder="agent_..." />
+              <input
+                id="mod-target-agent"
+                value={targetAgentId}
+                onChange={(event) => setTargetAgentId(event.target.value)}
+                placeholder="agent_..."
+              />
             </label>
-            <label>
+            <label htmlFor="mod-ruling">
               <span>Ruling</span>
-              <select value={ruling} onChange={(event) => setRuling(event.target.value as 'pay_worker' | 'refund_requester' | 'split')}>
-                <option value="refund_requester">refund_requester</option>
-                <option value="pay_worker">pay_worker</option>
-                <option value="split">split</option>
+              <select
+                id="mod-ruling"
+                value={ruling}
+                onChange={(event) => setRuling(event.target.value as 'pay_worker' | 'refund_requester' | 'split')}
+                aria-label="Select the ruling outcome"
+              >
+                <option value="refund_requester">Refund requester</option>
+                <option value="pay_worker">Pay worker</option>
+                <option value="split">Split</option>
               </select>
             </label>
           </div>
           <div className="button-row">
-            <button type="button" onClick={loadEvidence} disabled={loading !== null || !disputeId}>
-              {loading === 'evidence' ? 'Loading...' : 'Load evidence'}
+            <button type="button" onClick={() => void loadEvidence()} disabled={loading !== null || !disputeId}>
+              {loading === 'evidence' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Loading…
+                </>
+              ) : (
+                'Load evidence'
+              )}
             </button>
-            <button type="button" onClick={resolveDispute} disabled={loading !== null || !disputeId || !targetAgentId}>
-              {loading === 'resolve' ? 'Resolving...' : 'Finalize ruling'}
+            <button
+              type="button"
+              onClick={() => void resolveDispute()}
+              disabled={loading !== null || !disputeId || !targetAgentId}
+              aria-label="Finalize the ruling for this dispute"
+            >
+              {loading === 'resolve' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Resolving…
+                </>
+              ) : (
+                'Finalize ruling'
+              )}
             </button>
           </div>
 
           {evidence ? (
-            <div className="kv-grid">
+            <div className="kv-grid" style={{ marginTop: 10 }}>
               <div>
                 <strong>Status</strong>
                 <div>{evidence.dispute.status}</div>
@@ -186,12 +270,19 @@ export default function ModeratorPage() {
               </div>
             </div>
           ) : (
-            <p className="muted-text">Load an evidence pack to review signatures, events, and policy outcomes.</p>
+            <p className="muted-text" style={{ marginTop: 8 }}>
+              Load an evidence pack to review signatures, events, and policy outcomes.
+            </p>
           )}
         </div>
 
         <RealtimeFeed channels={['dispute.*', 'sanction.*', 'wallet.*']} />
-        {message ? <div className="card">{message}</div> : null}
+
+        {message ? (
+          <div className={`callout ${messageIsError ? 'bad' : 'ok'}`} role="alert" aria-live="assertive">
+            {message}
+          </div>
+        ) : null}
       </section>
     </ConsoleShell>
   );

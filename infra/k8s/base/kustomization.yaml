@@ -1,9 +1,42 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: clawbot-marketplace
+
 resources:
+  # Namespace must be first
   - namespace.yaml
+  # Network policies — order matters: deny-all first, then allowances
   - networkpolicy-default-deny.yaml
   - networkpolicy-egress-allowlist.yaml
+  - networkpolicy-internal-allow.yaml
+  # Core deployments + services
   - services.yaml
+  # Observability (OtelCollector ConfigMap + Deployment + Service)
   - observability.yaml
+  # Horizontal Pod Autoscalers
+  - hpa.yaml
+  # Pod Disruption Budgets
+  - pdb.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: clawbot-marketplace
+
+# Generate OPA policy ConfigMap from the actual policy file
+# so K8s always uses the version checked into policies/
+configMapGenerator:
+  - name: opa-policy-bundle
+    behavior: replace
+    files:
+      - marketplace.rego=../../../policies/marketplace.rego
+
+# Image overrides — update these for staging/prod overlays
+images:
+  - name: ghcr.io/clawbot/api-gateway-bff
+    newTag: latest
+  - name: ghcr.io/clawbot/web-console
+    newTag: latest
+  - name: ghcr.io/clawbot/temporal-worker
+    newTag: latest
+  - name: ghcr.io/clawbot/execution-orchestrator
+    newTag: latest

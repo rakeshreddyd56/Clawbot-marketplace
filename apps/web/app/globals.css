@@ -33,6 +33,27 @@ body {
   font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
+/* ---- Skip link (keyboard accessibility) ---- */
+.skip-link {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform: translateY(-100%);
+  background: var(--accent);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 0 0 10px 0;
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  z-index: 9999;
+  transition: transform 0.15s ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 a {
   color: inherit;
 }
@@ -81,6 +102,15 @@ textarea {
   border-radius: 10px;
   padding: 9px 11px;
   background: #fff;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(20, 107, 78, 0.12);
 }
 
 button {
@@ -91,11 +121,31 @@ button {
   color: #fff;
   font-weight: 650;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: filter 0.15s ease, opacity 0.15s ease;
 }
 
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+button:not(:disabled):hover {
+  filter: brightness(1.08);
+}
+
+button:not(:disabled):active {
+  filter: brightness(0.94);
+}
+
+/* ---- Focus Ring (global) ---- */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .header {
@@ -171,6 +221,25 @@ button:disabled {
   padding: 8px 12px;
   text-decoration: none;
   background: #fff;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.link-row a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background-color: rgba(20, 107, 78, 0.05);
+}
+
+/* ---- Card with fade-in ---- */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .card {
@@ -179,6 +248,7 @@ button:disabled {
   border-radius: 15px;
   padding: 15px;
   box-shadow: 0 12px 28px rgba(13, 31, 24, 0.08);
+  animation: card-in 0.2s ease both;
 }
 
 .badge {
@@ -211,6 +281,13 @@ button:disabled {
   border-radius: 999px;
   font-size: 14px;
   text-decoration: none;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.nav a:hover:not(.active) {
+  border-color: var(--accent);
+  color: var(--accent);
+  background-color: rgba(20, 107, 78, 0.05);
 }
 
 .nav a.active {
@@ -234,6 +311,7 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 .pill-ok {
@@ -265,6 +343,12 @@ button:disabled {
   background: #fff;
   color: var(--ink);
   padding: 8px 14px;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.pill-button:hover:not(.selected) {
+  border-color: var(--muted);
+  background-color: rgba(71, 98, 86, 0.05);
 }
 
 .pill-button.selected {
@@ -295,6 +379,12 @@ button:disabled {
   align-items: center;
   gap: 8px;
   width: 100%;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.list-button:hover {
+  border-color: var(--accent);
+  background-color: rgba(20, 107, 78, 0.05);
 }
 
 .kv-grid {
@@ -312,19 +402,63 @@ button:disabled {
 .callout.ok {
   border-color: rgba(13, 122, 74, 0.25);
   background: var(--pill-ok-bg);
+  color: var(--pill-ok);
 }
 
 .callout.warn {
   border-color: rgba(141, 90, 15, 0.24);
   background: var(--pill-warn-bg);
+  color: var(--pill-warn);
 }
 
 .callout.bad {
   border-color: rgba(164, 49, 47, 0.25);
   background: var(--pill-bad-bg);
+  color: var(--pill-bad);
 }
 
-.evidence-panel h3 {
+.callout.info {
+  border-color: rgba(36, 85, 111, 0.2);
+  background: var(--pill-info-bg);
+  color: var(--pill-info);
+}
+
+/* ---- Field Error ---- */
+.field-error {
+  color: var(--pill-bad);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+/* ---- Empty State ---- */
+.empty-state {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+/* ---- Button Spinner ---- */
+@keyframes btn-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: btn-spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ---- Evidence Panel ---- */
+.evidence-panel h2 {
   font-size: 16px;
   margin-top: 8px;
   margin-bottom: 8px;
@@ -348,12 +482,24 @@ button:disabled {
   margin-bottom: 6px;
 }
 
+/* ---- Realtime Feed ---- */
 .feed {
   max-height: 290px;
   overflow: auto;
   border-top: 1px solid var(--line);
   margin-top: 10px;
   padding-top: 10px;
+}
+
+.feed-event {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(202, 218, 203, 0.5);
+}
+
+.feed-event:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .desktop-rail {
@@ -364,6 +510,7 @@ button:disabled {
   display: none;
 }
 
+/* ---- Responsive: tablet (<=1024px) ---- */
 @media (max-width: 1024px) {
   main {
     padding: 16px;
@@ -380,4 +527,95 @@ button:disabled {
   .mobile-rail {
     display: block;
   }
+}
+
+/* ---- Sticky rail on wide screens ---- */
+@media (min-width: 1025px) {
+  .console-rail {
+    position: sticky;
+    top: 16px;
+    align-self: start;
+  }
+
+  .evidence-panel.desktop-rail {
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+}
+
+/* ---- Responsive: mobile (<=600px) ---- */
+@media (max-width: 600px) {
+  .header {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .nav {
+    width: 100%;
+  }
+
+  .button-row {
+    flex-direction: column;
+  }
+
+  .button-row button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .kv-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ---- Touch targets & iOS zoom prevention (<=768px) ---- */
+@media (max-width: 768px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px; /* Prevents iOS auto-zoom on focus */
+    min-height: 44px;
+  }
+
+  button,
+  .nav a,
+  .link-row a,
+  .list-button {
+    min-height: 44px;
+  }
+}
+
+/* ─── Skeleton loaders ──────────────────────────────────────────────────────── */
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -600px 0;
+  }
+  100% {
+    background-position: 600px 0;
+  }
+}
+
+/**
+ * Apply this class to any placeholder element.
+ * Set width/height via inline style or a wrapper class.
+ */
+.skeleton-line {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    #e4ece1 25%,
+    #f1f7ee 50%,
+    #e4ece1 75%
+  );
+  background-size: 1200px 100%;
+  animation: skeleton-shimmer 1.6s infinite linear;
+  border-radius: 6px;
+}
+
+/** Wraps skeleton content inside a card — disables pointer events. */
+.skeleton-card {
+  pointer-events: none;
+  user-select: none;
 }

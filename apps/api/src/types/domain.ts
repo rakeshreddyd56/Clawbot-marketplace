@@ -50,6 +50,8 @@ export type Store = {
   deliverySecrets: Map<string, string>;
   /** TASK-FEAT-001: Custom milestone names stored at task creation. Key: taskId */
   taskMilestoneNames: Map<string, string[]>;
+  /** TASK-HARD-005: Processed Stripe webhook event IDs for idempotency. */
+  processedWebhookEventIds: Set<string>;
 };
 
 export type AuthContext = {
