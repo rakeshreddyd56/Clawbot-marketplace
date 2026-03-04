@@ -610,9 +610,9 @@
 ---
 
 ### BUG-CRIT-001: Fix unauthenticated WebSocket endpoints
-- **Status:** backlog
+- **Status:** review
 - **Priority:** P0 — CRITICAL, deployment blocker
-- **Assigned to:** —
+- **Assigned to:** coder
 - **Depends on:** —
 - **Estimated effort:** 1 hour
 - **Description:**
@@ -696,9 +696,9 @@
 ---
 
 ### BUG-HIGH-003: Fix moderator can slash/sanction arbitrary agents
-- **Status:** backlog
+- **Status:** done
 - **Priority:** P1 — HIGH, deployment blocker
-- **Assigned to:** —
+- **Assigned to:** security-auditor
 - **Depends on:** —
 - **Estimated effort:** 30 minutes
 - **Description:**
@@ -719,10 +719,10 @@
   );
   ```
 - **Acceptance Criteria:**
-  - [ ] `targetAgentId` not party to dispute → 400 INVALID_TARGET_AGENT
-  - [ ] `targetAgentId` = requesterAgentId → sanction applied correctly
-  - [ ] `targetAgentId` = workerAgentId → sanction applied correctly
-  - [ ] Tests: non-party agent ID rejected; both valid parties accepted
+  - [x] `targetAgentId` not party to dispute → 400 INVALID_TARGET_AGENT
+  - [x] `targetAgentId` = requesterAgentId → sanction applied correctly
+  - [x] `targetAgentId` = workerAgentId → sanction applied correctly
+  - [x] Tests: non-party agent ID rejected; both valid parties accepted
 
 ---
 

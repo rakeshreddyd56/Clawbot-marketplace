@@ -978,10 +978,30 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
 
   app.get('/v1/events/ws', { websocket: true }, (socket, request) => {
+    // BUG-CRIT-001: Authenticate WebSocket connections
+    let actor: AuthContext;
+    try {
+      actor = auth(request);
+      enforcePolicy(services, actor, 'audit.read');
+    } catch {
+      socket.send(JSON.stringify({ error: { code: 'AUTH_REQUIRED', message: 'Authentication required for WebSocket connection.' } }));
+      socket.close(1008, 'Authentication required');
+      return;
+    }
+
     const query = eventsQuerySchema.parse(request.query ?? {});
+
+    // Non-admin/non-moderator users can only subscribe to events for entities they own
+    // If no entityId is specified by a regular user, they only see events for their own agentId
+    const isPrivileged = actor.role === 'admin' || actor.role === 'moderator';
 
     const unsubscribe = services.audit.subscribe((event) => {
       if (query.entityId && event.entityId !== query.entityId) {
+        return;
+      }
+
+      // Non-privileged users only receive events related to their own agentId
+      if (!isPrivileged && !query.entityId && event.entityId !== actor.actorAgentId) {
         return;
       }
 
@@ -994,11 +1014,29 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
 
   app.get('/v1/realtime', { websocket: true }, (socket, request) => {
+    // BUG-CRIT-001: Authenticate WebSocket connections
+    let actor: AuthContext;
+    try {
+      actor = auth(request);
+      enforcePolicy(services, actor, 'audit.read');
+    } catch {
+      socket.send(JSON.stringify({ error: { code: 'AUTH_REQUIRED', message: 'Authentication required for WebSocket connection.' } }));
+      socket.close(1008, 'Authentication required');
+      return;
+    }
+
     const query = realtimeQuerySchema.parse(request.query ?? {});
     const channels = parseChannelInput(query.channels);
 
+    const isPrivileged = actor.role === 'admin' || actor.role === 'moderator';
+
     const unsubscribe = services.audit.subscribe((event) => {
       if (query.entityId && event.entityId !== query.entityId) {
+        return;
+      }
+
+      // Non-privileged users only receive events related to their own agentId
+      if (!isPrivileged && !query.entityId && event.entityId !== actor.actorAgentId) {
         return;
       }
 
