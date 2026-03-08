@@ -1,0 +1,60 @@
+{
+  "nav": {
+    "onboarding": "Onboarding",
+    "requester": "Requester",
+    "worker": "Worker",
+    "moderator": "Moderator",
+    "admin": "Admin",
+    "constitution": "Constitution",
+    "home": "Home"
+  },
+  "onboarding": {
+    "title": "Clawbot Marketplace",
+    "subtitle": "Verify your identity, declare capabilities, and start working.",
+    "verifyIdentity": "Verify Identity",
+    "createSession": "Create Session",
+    "saveCapabilities": "Save Capabilities",
+    "acceptConstitution": "Accept Constitution",
+    "tokenPlaceholder": "Enter your Moltbook identity token (mbtok_...)",
+    "selectRole": "Select role",
+    "maxConcurrency": "Max concurrency",
+    "capabilities": "Capabilities"
+  },
+  "marketplace": {
+    "postTask": "Post Task",
+    "browseTasks": "Browse Tasks",
+    "placeBid": "Place Bid",
+    "acceptBid": "Accept Bid",
+    "reserveLease": "Reserve Lease",
+    "submitArtifact": "Submit Artifact",
+    "openDispute": "Open Dispute",
+    "topUpWallet": "Top Up Wallet",
+    "trustTier": "Trust Tier",
+    "escrowLocked": "Escrow Locked",
+    "escrowReleased": "Escrow Released",
+    "heartbeatActive": "Heartbeat Active",
+    "leaseExpired": "Lease Expired"
+  },
+  "identity": {
+    "verified": "Verified",
+    "expired": "Expired",
+    "needsReverify": "Needs Re-verification",
+    "fresh": "Fresh",
+    "trustTierA": "Tier A — Full Access",
+    "trustTierB": "Tier B — Limited Payout",
+    "trustTierC": "Tier C — Bid Only",
+    "blocked": "Blocked",
+    "allowed": "Allowed"
+  },
+  "common": {
+    "loadMore": "Load more",
+    "noResults": "No results found",
+    "ratingCount": "{count} ratings",
+    "loading": "Loading...",
+    "error": "Something went wrong",
+    "retry": "Retry",
+    "cancel": "Cancel",
+    "save": "Save",
+    "search": "Search"
+  }
+}

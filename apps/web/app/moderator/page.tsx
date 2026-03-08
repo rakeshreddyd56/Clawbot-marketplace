@@ -6,6 +6,8 @@ import { EvidenceRail } from '../../components/evidence-rail';
 import type { EvidenceItem } from '../../components/evidence-rail';
 import { IdentityStrip } from '../../components/identity-strip';
 import { RealtimeFeed } from '../../components/realtime-feed';
+import { DisputeDeadlineTimer, useDeadlineStatus } from '../../components/dispute-deadline-timer';
+import type { DeadlineStatus } from '../../components/dispute-deadline-timer';
 import { bffFetch } from '../../components/api';
 
 type Dispute = {
@@ -14,7 +16,10 @@ type Dispute = {
   status: string;
   reasonCode: string;
   appealDeadlineAt: string;
+  openedBy?: string;
+  autoDecision?: string;
   finalRuling?: string;
+  createdAt?: string;
 };
 
 type EvidencePayload = {
@@ -251,24 +256,46 @@ export default function ModeratorPage() {
           </div>
 
           {evidence ? (
-            <div className="kv-grid" style={{ marginTop: 10 }}>
-              <div>
-                <strong>Status</strong>
-                <div>{evidence.dispute.status}</div>
+            <>
+              <div className="kv-grid" style={{ marginTop: 10 }}>
+                <div>
+                  <strong>Status</strong>
+                  <div>{evidence.dispute.status}</div>
+                </div>
+                <div>
+                  <strong>Reason</strong>
+                  <div>{evidence.dispute.reasonCode}</div>
+                </div>
+                <div>
+                  <strong>Opened by</strong>
+                  <div>{evidence.dispute.openedBy ?? 'unknown'}</div>
+                </div>
+                <div>
+                  <strong>Events</strong>
+                  <div>{evidence.events.length}</div>
+                </div>
               </div>
-              <div>
-                <strong>Reason</strong>
-                <div>{evidence.dispute.reasonCode}</div>
-              </div>
-              <div>
-                <strong>Appeal deadline</strong>
-                <div>{new Date(evidence.dispute.appealDeadlineAt).toLocaleString()}</div>
-              </div>
-              <div>
-                <strong>Events</strong>
-                <div>{evidence.events.length}</div>
-              </div>
-            </div>
+
+              {/* 72h response deadline timer — shows when dispute is awaiting response */}
+              {evidence.dispute.status === 'AUTO_DECIDED' || evidence.dispute.status === 'UNDER_APPEAL' ? (
+                <div style={{ marginTop: 12 }} data-testid="moderator-deadline-timer">
+                  <DisputeDeadlineTimer
+                    appealDeadlineAt={evidence.dispute.appealDeadlineAt}
+                    variant={evidence.dispute.status === 'AUTO_DECIDED' ? 'response' : 'appeal'}
+                    onExpired={() => void loadEvidence()}
+                  />
+                </div>
+              ) : evidence.dispute.status === 'FINAL' && evidence.dispute.finalRuling ? (
+                <div className="callout ok" style={{ marginTop: 12 }} role="status">
+                  Final ruling: <strong>{evidence.dispute.finalRuling}</strong>
+                  {evidence.dispute.autoDecision === 'default_in_favor_of_opener' ? (
+                    <span className="muted-text" style={{ marginLeft: 8, fontSize: 12 }}>
+                      (auto-ruled: 72h response timeout)
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           ) : (
             <p className="muted-text" style={{ marginTop: 8 }}>
               Load an evidence pack to review signatures, events, and policy outcomes.

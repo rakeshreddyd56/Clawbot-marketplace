@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
     "start": "node dist/server.js",
+    "migrate": "tsx src/core/migrate.ts",
     "test": "vitest run",
     "lint": "echo \"no lint\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -20,10 +21,13 @@
     "@fastify/websocket": "^11.0.2",
     "fastify": "^5.2.1",
     "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1",
+    "@temporalio/client": "latest",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.8",
+    "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.3",
     "supertest": "^7.0.0",
     "tsx": "^4.19.2",

@@ -25,6 +25,16 @@ type WorkerEligibility = {
   blockReasons: Array<{ code: string; message: string }>;
 };
 
+type SweepResult = {
+  swept: number;
+  disputes: Array<{
+    disputeId: string;
+    status: string;
+    finalRuling: string;
+    againstAgentId?: string;
+  }>;
+};
+
 export default function AdminPage() {
   const [agentId, setAgentId] = useState('');
   const [eligibility, setEligibility] = useState<WorkerEligibility | null>(null);
@@ -33,6 +43,7 @@ export default function AdminPage() {
   const [messageIsError, setMessageIsError] = useState(false);
   const [loading, setLoading] = useState<string | null>(null);
   const [decisionsLoaded, setDecisionsLoaded] = useState(false);
+  const [sweepResult, setSweepResult] = useState<SweepResult | null>(null);
 
   const evidenceItems = useMemo<EvidenceItem[]>(
     () => [
@@ -54,6 +65,28 @@ export default function AdminPage() {
       setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load decisions.');
+      setMessageIsError(true);
+    } finally {
+      setLoading(null);
+    }
+  }, []);
+
+  const runDisputeSweep = useCallback(async () => {
+    try {
+      setLoading('sweep');
+      const result = await bffFetch<SweepResult>('disputes/sweep', {
+        method: 'POST',
+        body: JSON.stringify({})
+      });
+      setSweepResult(result);
+      if (result.swept > 0) {
+        setMessage(`Swept ${result.swept} expired dispute${result.swept === 1 ? '' : 's'} with auto-ruling.`);
+      } else {
+        setMessage('No expired disputes found. All disputes are within the 72h response window.');
+      }
+      setMessageIsError(false);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Dispute sweep failed.');
       setMessageIsError(true);
     } finally {
       setLoading(null);
@@ -178,6 +211,62 @@ export default function AdminPage() {
                   </span>
                 </div>
               ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="card">
+          <h2 className="badge">Dispute Auto-Ruling Sweep</h2>
+          <p className="muted-text" style={{ marginTop: 8, marginBottom: 0 }}>
+            Sweep all disputes past the 72-hour response deadline. Expired disputes receive a default ruling
+            in favor of the opener, with progressive sanctions applied to non-responding parties.
+          </p>
+          <div className="button-row" style={{ marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => void runDisputeSweep()}
+              disabled={loading !== null}
+              aria-label="Run dispute auto-ruling sweep for expired 72h deadlines"
+            >
+              {loading === 'sweep' ? (
+                <>
+                  <span className="btn-spinner" aria-hidden="true" />
+                  Sweeping…
+                </>
+              ) : (
+                'Run sweep'
+              )}
+            </button>
+          </div>
+          {sweepResult ? (
+            <div className="sweep-results" data-testid="sweep-results">
+              <div className="kv-grid" style={{ marginTop: 10 }}>
+                <div>
+                  <strong>Swept</strong>
+                  <div>{sweepResult.swept} dispute{sweepResult.swept === 1 ? '' : 's'}</div>
+                </div>
+              </div>
+              {sweepResult.disputes.length > 0 ? (
+                <div className="stack-tight" style={{ marginTop: 10 }} role="list" aria-label="Swept disputes">
+                  {sweepResult.disputes.map((d) => (
+                    <div key={d.disputeId} className="readiness-row" role="listitem">
+                      <div>
+                        <strong>{d.disputeId}</strong>
+                        <div className="muted-text" style={{ fontSize: 12 }}>
+                          Ruling: {d.finalRuling}{d.againstAgentId ? ` | Against: ${d.againstAgentId}` : ''}
+                        </div>
+                      </div>
+                      <span className="pill pill-warn" role="status">
+                        {d.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted-text" style={{ marginTop: 8 }}>
+                  No disputes required auto-ruling.
+                </p>
+              )}
             </div>
           ) : null}
         </div>

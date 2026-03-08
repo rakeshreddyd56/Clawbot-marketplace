@@ -1,0 +1,212 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Alertmanager Configuration
+#
+# Routes PrometheusRule alerts (defined in infra/k8s/base/prometheusrule.yaml)
+# to the correct notification channels:
+#
+#   severity: critical + page: "true"  →  PagerDuty  (P0 — immediate response)
+#   severity: critical                 →  Slack #platform-critical
+#   severity: warning                  →  Slack #platform-alerts
+#   domain: escrow                     →  Slack #trust-safety-alerts (always)
+#
+# Alert groups mirror PrometheusRule groups:
+#   - clawbot.api.slo             (error rate, latency)
+#   - clawbot.escrow.integrity    (escrow failures, slash spikes)
+#   - clawbot.identity            (Moltbook latency, failure rate)
+#   - clawbot.opa                 (OPA latency, pod count)
+#   - clawbot.websocket           (disconnect rate, connection count)
+#   - clawbot.audit               (audit chain stall)
+#   - clawbot.otel                (collector memory, span drops)
+#   - clawbot.k8s.deployments     (pod unavailability, stuck rollouts)
+#
+# Local dev: Alertmanager runs in docker-compose on port 9093.
+#   UI: http://localhost:9093
+#
+# To silence an alert during maintenance:
+#   amtool silence add --alertmanager.url=http://localhost:9093 \
+#     alertname=ClawbotApiErrorRateWarning \
+#     --duration=2h --comment="Planned maintenance"
+#
+# Production: Replace webhook URLs and PagerDuty keys with real values.
+#   Secrets should come from environment variables injected at runtime
+#   (see infra/k8s/base/secrets.yaml for the K8s secret template).
+# ─────────────────────────────────────────────────────────────────────────────
+
+global:
+  # How long to wait before re-sending a resolved notification
+  resolve_timeout: 5m
+
+  # SMTP settings (optional — uncomment if using email receivers)
+  # smtp_smarthost: "smtp.example.com:587"
+  # smtp_from: "alertmanager@clawbot.io"
+  # smtp_auth_username: "alerts@clawbot.io"
+  # smtp_auth_password: "${SMTP_PASSWORD}"
+  # smtp_require_tls: true
+
+  # Default Slack API URL (overridden per receiver if needed)
+  # In production, set via SLACK_API_URL env var and use ${SLACK_API_URL}
+  slack_api_url: "${SLACK_API_URL}"
+
+# ── Inhibit Rules ──────────────────────────────────────────────────────────────
+# When a critical alert is firing, suppress the corresponding warning
+# to reduce noise (e.g. error rate critical suppresses warning).
+inhibit_rules:
+  # Suppress warning when critical is firing for the same SLO + service
+  - source_matchers:
+      - severity = "critical"
+    target_matchers:
+      - severity = "warning"
+    equal:
+      - alertname
+      - service
+
+  # Suppress all alerts for a deployment that has 0 available pods
+  # (the ClawbotDeploymentUnavailable alert is the signal; everything else is noise)
+  - source_matchers:
+      - alertname = "ClawbotDeploymentUnavailable"
+    target_matchers:
+      - service =~ ".*"
+    equal:
+      - deployment
+
+# ── Templates ──────────────────────────────────────────────────────────────────
+templates:
+  - "/etc/alertmanager/templates/*.tmpl"
+
+# ── Routing Tree ───────────────────────────────────────────────────────────────
+route:
+  # Default receiver for anything that doesn't match a specific route
+  receiver: slack-platform-alerts
+
+  # Group alerts by name + service — avoids alert storms
+  group_by: ["alertname", "service", "domain"]
+
+  # Wait up to 30s to batch alerts into a single notification
+  group_wait: 30s
+
+  # Wait 5 minutes before re-sending an active alert group
+  group_interval: 5m
+
+  # Wait 4 hours before re-sending a resolved alert
+  repeat_interval: 4h
+
+  routes:
+    # ── P0: Critical + page=true → PagerDuty ────────────────────────────────
+    # These alerts require immediate human response.
+    # Matching alerts: ClawbotApiErrorRateCritical, ClawbotApiLatencyBreachP99,
+    #   ClawbotEscrowOperationFailure, ClawbotMoltbookFailureRate,
+    #   ClawbotOpaPodDown, ClawbotAuditChainStalled, ClawbotDeploymentUnavailable
+    - receiver: pagerduty-p0
+      matchers:
+        - severity = "critical"
+        - page = "true"
+      continue: true  # Also send to Slack critical channel
+
+    # ── Critical (no page flag) → Slack critical ─────────────────────────────
+    - receiver: slack-critical
+      matchers:
+        - severity = "critical"
+      group_wait: 10s
+      group_interval: 3m
+      repeat_interval: 1h
+
+    # ── Escrow + Trust Safety → dedicated channel (any severity) ────────────
+    # Escrow anomalies always go to #trust-safety-alerts for domain team visibility.
+    - receiver: slack-trust-safety
+      matchers:
+        - domain = "escrow"
+      continue: false  # Trust safety team owns escrow alerts
+
+    # ── Identity domain alerts ───────────────────────────────────────────────
+    - receiver: slack-platform-alerts
+      matchers:
+        - domain = "identity"
+      group_interval: 10m
+      repeat_interval: 6h
+
+    # ── Warning → Slack platform-alerts ─────────────────────────────────────
+    - receiver: slack-platform-alerts
+      matchers:
+        - severity = "warning"
+      group_interval: 10m
+      repeat_interval: 6h
+
+# ── Receivers ──────────────────────────────────────────────────────────────────
+receivers:
+  # ── PagerDuty (P0 — immediate on-call page) ───────────────────────────────
+  - name: pagerduty-p0
+    pagerduty_configs:
+      - routing_key: "${PAGERDUTY_ROUTING_KEY}"
+        # Map Prometheus severity to PagerDuty severity
+        severity: "{{ .CommonLabels.severity }}"
+        description: |-
+          [{{ .Status | toUpper }}{{ if eq .Status "firing" }} 🔥{{ end }}]
+          {{ .CommonLabels.alertname }} — {{ .CommonAnnotations.summary }}
+        details:
+          firing: "{{ .Alerts.Firing | len }}"
+          resolved: "{{ .Alerts.Resolved | len }}"
+          description: "{{ .CommonAnnotations.description }}"
+          runbook: "{{ .CommonAnnotations.runbook }}"
+          service: "{{ .CommonLabels.service }}"
+          namespace: "clawbot-marketplace"
+        # Include a link to the alert in Prometheus UI
+        links:
+          - href: "http://prometheus:9090/alerts"
+            text: "Prometheus Alerts"
+
+  # ── Slack: #platform-critical (severity=critical) ─────────────────────────
+  - name: slack-critical
+    slack_configs:
+      - channel: "#platform-critical"
+        # Use SLACK_WEBHOOK_CRITICAL env var in production
+        api_url: "${SLACK_WEBHOOK_CRITICAL}"
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+        title: |-
+          {{ if eq .Status "firing" }}🚨 CRITICAL{{ else }}✅ RESOLVED{{ end }}: {{ .CommonLabels.alertname }}
+        text: |-
+          *{{ .CommonAnnotations.summary }}*
+          {{ .CommonAnnotations.description }}
+          {{ if .CommonAnnotations.runbook }}*Runbook:* {{ .CommonAnnotations.runbook }}{{ end }}
+          *Service:* {{ .CommonLabels.service | default "unknown" }}
+          *Alerts firing:* {{ .Alerts.Firing | len }}
+        footer: "Clawbot Marketplace Alertmanager"
+        icon_emoji: ":rotating_light:"
+        username: "Clawbot Alerts"
+
+  # ── Slack: #trust-safety-alerts (domain=escrow) ────────────────────────────
+  - name: slack-trust-safety
+    slack_configs:
+      - channel: "#trust-safety-alerts"
+        api_url: "${SLACK_WEBHOOK_TRUST_SAFETY}"
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
+        title: |-
+          {{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}🚨{{ else }}⚠️{{ end }}{{ else }}✅{{ end }} Escrow Alert: {{ .CommonLabels.alertname }}
+        text: |-
+          *{{ .CommonAnnotations.summary }}*
+          {{ .CommonAnnotations.description }}
+          *Severity:* {{ .CommonLabels.severity | toUpper }}
+          *Domain:* Escrow / Financial Integrity
+          *Alerts firing:* {{ .Alerts.Firing | len }}
+        footer: "Clawbot Trust & Safety"
+        icon_emoji: ":bank:"
+        username: "Clawbot Trust & Safety"
+
+  # ── Slack: #platform-alerts (general warnings) ────────────────────────────
+  - name: slack-platform-alerts
+    slack_configs:
+      - channel: "#platform-alerts"
+        # Uses the global slack_api_url (SLACK_API_URL env var)
+        send_resolved: true
+        color: '{{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}{{ else }}good{{ end }}'
+        title: |-
+          {{ if eq .Status "firing" }}{{ if eq .CommonLabels.severity "critical" }}🚨{{ else }}⚠️{{ end }}{{ else }}✅{{ end }} {{ .CommonLabels.alertname }}
+        text: |-
+          *{{ .CommonAnnotations.summary }}*
+          {{ .CommonAnnotations.description }}
+          *Severity:* {{ .CommonLabels.severity }}
+          *Service:* {{ .CommonLabels.service | default "unknown" }}
+        footer: "Clawbot Marketplace Alertmanager"
+        icon_emoji: ":bell:"
+        username: "Clawbot Alerts"

@@ -175,10 +175,11 @@ describe('TASK-TEST-001: Moltbook identity flows', () => {
       }
     });
 
-    // FakeMoltbookVerifier sets isActive=false for 'deactivated' tokens
-    // MarketplaceCore.verifyMoltbook checks assertDomain(verified.isActive, 'AGENT_DEACTIVATED', ...)
+    // GAP-HIGH-001: MoltbookIdentityService.verify() now checks isActive and adds
+    // a blocking ROLE_NOT_ALLOWED reason to the snapshot. The trust gate in onboardingVerify
+    // catches hardBlocked snapshots before MarketplaceCore.verifyMoltbook is reached.
     expect(res.statusCode).toBe(403);
-    expect(res.json<{ error: { code: string } }>().error.code).toBe('AGENT_DEACTIVATED');
+    expect(res.json<{ error: { code: string } }>().error.code).toBe('MOLTBOOK_TRUST_GATE_FAILED');
   });
 
   // ─────────────────────────────────────────────────────────────────────────────

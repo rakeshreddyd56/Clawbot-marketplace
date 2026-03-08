@@ -13,6 +13,7 @@ import {
 } from '@claw/contracts';
 import { nowIso } from '@claw/utils';
 import type { MoltbookVerifier } from '../adapters/moltbook.js';
+import type { MoltbookSnapshotCache } from '../adapters/moltbook-cache.js';
 import type { AuthContext, Store } from '../types/domain.js';
 import { DomainError, assertDomain } from '../core/errors.js';
 
@@ -31,17 +32,53 @@ function getExpiryWindowMs(): number {
 }
 
 export class MoltbookIdentityService {
+  private readonly cache: MoltbookSnapshotCache | null;
+
   constructor(
     private readonly store: Store,
-    private readonly verifier: MoltbookVerifier
-  ) {}
+    private readonly verifier: MoltbookVerifier,
+    cache?: MoltbookSnapshotCache | null
+  ) {
+    this.cache = cache ?? null;
+  }
 
-  async verify(identityToken: string, audience: string): Promise<MoltbookVerificationSnapshot> {
+  /**
+   * Verify a Moltbook identity token and return a snapshot.
+   *
+   * TASK-HARD-013: When Redis cache is available:
+   * - forceRefresh=false (default): check cache first, call API on miss
+   * - forceRefresh=true: bypass cache, always call Moltbook API
+   *
+   * HIGH-002: Financial operations (payout, reserve) MUST use forceRefresh=true
+   * to prevent stale privilege escalation.
+   */
+  async verify(identityToken: string, audience: string, forceRefresh = false): Promise<MoltbookVerificationSnapshot> {
     const verified = await this.verifier.verify(identityToken, audience);
+    const agentId = verified.agentId;
+
+    // TASK-HARD-013: Check Redis cache (unless force-refreshing)
+    // Cache is keyed by agentId. We verify the token first to get the agentId,
+    // then check if we have a cached snapshot that's still fresh.
+    // This avoids a full re-computation of trust tier, block reasons, etc.
+    if (!forceRefresh && this.cache) {
+      const cached = await this.cache.get(agentId);
+      if (cached && Date.now() < new Date(cached.expiresAt).getTime()) {
+        // Cache hit — update in-memory store and return
+        this.store.moltbookSnapshots.set(agentId, cached);
+        this.store.lastIdentityTokens.set(agentId, identityToken);
+        return cached;
+      }
+    }
+
     const checkedAt = verified.checkedAt || nowIso();
     const expiresAt = verified.expiresAt || new Date(Date.now() + getExpiryWindowMs()).toISOString();
     const trustedUntilAt = new Date(new Date(checkedAt).getTime() + getTrustedWindowMs()).toISOString();
     const tokenExpired = new Date(expiresAt).getTime() <= Date.now();
+
+    // TASK-ENFORCE-007: Block registration if owner handle is banned
+    if (this.store.bannedOwnerHandles.has(verified.ownerXHandle)) {
+      throw new DomainError('BANNED_OWNER', 'This owner account has been permanently banned.', 403);
+    }
 
     const historicalOwner = this.store.historicalOwnerHandles.get(verified.agentId);
     const ownerMismatch = Boolean(historicalOwner) && historicalOwner !== verified.ownerXHandle;
@@ -64,6 +101,16 @@ export class MoltbookIdentityService {
         ActionBlockReasonSchema.parse({
           code: 'TOKEN_EXPIRED',
           message: 'Moltbook identity token has expired. Re-verify with a fresh token.',
+          blocking: true
+        })
+      );
+    }
+
+    if (!verified.isActive) {
+      baseReasons.push(
+        ActionBlockReasonSchema.parse({
+          code: 'ROLE_NOT_ALLOWED',
+          message: 'Moltbook bot is deactivated. Re-activate on Moltbook before using the marketplace.',
           blocking: true
         })
       );
@@ -137,18 +184,29 @@ export class MoltbookIdentityService {
 
     this.store.moltbookSnapshots.set(verified.agentId, snapshot);
     this.store.lastIdentityTokens.set(verified.agentId, identityToken);
+    // HIGH-003: NEVER store raw identity tokens in Redis — only agentId-keyed snapshots
 
     if (!historicalOwner) {
       this.store.historicalOwnerHandles.set(verified.agentId, verified.ownerXHandle);
+    }
+
+    // TASK-HARD-013: Cache the new snapshot in Redis
+    if (this.cache) {
+      await this.cache.set(verified.agentId, snapshot);
     }
 
     return snapshot;
   }
 
   async reverify(agentId: string, audience: string, identityToken?: string): Promise<MoltbookVerificationSnapshot> {
+    // TASK-HARD-013: Invalidate cache BEFORE calling API (fail-open toward security)
+    if (this.cache) {
+      await this.cache.invalidate(agentId);
+    }
+
     const token = identityToken ?? this.store.lastIdentityTokens.get(agentId);
     assertDomain(Boolean(token), 'REVERIFY_TOKEN_REQUIRED', 'No prior identity token available for re-verification.', 400);
-    return this.verify(token!, audience);
+    return this.verify(token!, audience, true); // forceRefresh=true on reverify
   }
 
   getSnapshot(agentId: string): MoltbookVerificationSnapshot {

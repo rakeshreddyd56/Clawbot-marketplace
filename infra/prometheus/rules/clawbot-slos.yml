@@ -1,0 +1,269 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Prometheus Alert Rules (local dev)
+#
+# This is a plain-YAML version of infra/k8s/base/prometheusrule.yaml
+# for use with local docker-compose Prometheus (not Prometheus Operator).
+#
+# K8s (PrometheusRule CRD) → infra/k8s/base/prometheusrule.yaml
+# Local (plain YAML rules) → this file (mounted into Prometheus container)
+#
+# Keep these two files in sync when adding new alert rules.
+# ─────────────────────────────────────────────────────────────────────────────
+groups:
+  # ─── API Gateway SLOs ───────────────────────────────────────────────────────
+  - name: clawbot.api.slo
+    interval: 1m
+    rules:
+      - record: clawbot:api_error_rate:5m
+        expr: >
+          sum(rate(clawbot_http_server_duration_milliseconds_count{http_status_code=~"5.."}[5m]))
+          /
+          sum(rate(clawbot_http_server_duration_milliseconds_count[5m]))
+
+      - alert: ClawbotApiErrorRateWarning
+        expr: clawbot:api_error_rate:5m > 0.005
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+          service: api-gateway-bff
+          slo: error_rate
+        annotations:
+          summary: "API error rate above 0.5% for 2 minutes"
+          description: >
+            Clawbot API 5xx error rate is {{ $value | humanizePercentage }}
+            (threshold: 0.5%). Investigate recent deployments or dependency failures.
+          runbook: "https://github.com/clawbot/marketplace/wiki/runbooks/api-error-rate"
+
+      - alert: ClawbotApiErrorRateCritical
+        expr: clawbot:api_error_rate:5m > 0.01
+        for: 1m
+        labels:
+          severity: critical
+          team: platform
+          service: api-gateway-bff
+          slo: error_rate
+          page: "true"
+        annotations:
+          summary: "CRITICAL: API error rate breaches 1% SLO"
+          description: >
+            Clawbot API 5xx error rate is {{ $value | humanizePercentage }}
+            (SLO: < 1%). Immediate investigation required — active user impact.
+          runbook: "https://github.com/clawbot/marketplace/wiki/runbooks/api-error-rate"
+
+      - alert: ClawbotApiLatencyWarning
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(clawbot_http_server_duration_milliseconds_bucket[5m])) by (le)
+          ) > 1000
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          service: api-gateway-bff
+          slo: latency
+        annotations:
+          summary: "API p95 latency above 1 second"
+          description: >
+            API p95 latency is {{ $value | humanizeDuration }}ms
+            (threshold: 1000ms). May indicate database slowdown or cold-start.
+
+      - alert: ClawbotApiLatencyBreachP99
+        expr: >
+          histogram_quantile(0.99,
+            sum(rate(clawbot_http_server_duration_milliseconds_bucket[5m])) by (le)
+          ) > 2000
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          service: api-gateway-bff
+          slo: latency
+          page: "true"
+        annotations:
+          summary: "CRITICAL: API p99 latency breaches 2s SLO"
+          description: >
+            API p99 latency is {{ $value | humanizeDuration }}ms
+            (SLO: < 2000ms). User-facing degradation in progress.
+          runbook: "https://github.com/clawbot/marketplace/wiki/runbooks/api-latency"
+
+  # ─── Escrow & Financial Integrity ───────────────────────────────────────────
+  - name: clawbot.escrow.integrity
+    interval: 1m
+    rules:
+      - alert: ClawbotEscrowOperationFailure
+        expr: >
+          sum(rate(clawbot_escrow_operations_total{result="failure"}[5m]))
+          /
+          sum(rate(clawbot_escrow_operations_total[5m])) > 0.02
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          service: api-gateway-bff
+          domain: escrow
+          page: "true"
+        annotations:
+          summary: "CRITICAL: Escrow operation failure rate > 2%"
+          description: >
+            {{ $value | humanizePercentage }} of escrow operations are failing.
+            This may cause financial inconsistency — investigate immediately.
+          runbook: "https://github.com/clawbot/marketplace/wiki/runbooks/escrow-failures"
+
+      - alert: ClawbotEscrowSlashSpike
+        expr: >
+          sum(rate(clawbot_escrow_operations_total{operation="slash"}[10m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+          team: trust-safety
+          domain: escrow
+        annotations:
+          summary: "Unusual escrow slash rate detected"
+          description: >
+            More than 5 escrow slashes per minute over the last 10 minutes.
+            Could indicate dispute abuse or a moderation bug.
+
+  # ─── Identity Verification ───────────────────────────────────────────────────
+  - name: clawbot.identity
+    interval: 1m
+    rules:
+      - alert: ClawbotMoltbookLatencyHigh
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(clawbot_identity_verification_duration_milliseconds_bucket[5m])) by (le)
+          ) > 1000
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          service: api-gateway-bff
+          domain: identity
+        annotations:
+          summary: "Moltbook verification p95 latency above 1 second"
+          description: >
+            Identity verification (Moltbook) p95 latency is
+            {{ $value | humanizeDuration }}ms. Consider Redis caching (TASK-HARD-013).
+
+      - alert: ClawbotMoltbookFailureRate
+        expr: >
+          sum(rate(clawbot_identity_verification_total{result="failure"}[5m]))
+          /
+          sum(rate(clawbot_identity_verification_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          team: platform
+          domain: identity
+          page: "true"
+        annotations:
+          summary: "CRITICAL: Moltbook verification failure rate > 5%"
+          description: >
+            {{ $value | humanizePercentage }} of identity verifications are failing.
+            Agents cannot authenticate — check Moltbook API availability.
+
+  # ─── OPA Policy Decision Service ────────────────────────────────────────────
+  - name: clawbot.opa
+    interval: 30s
+    rules:
+      - alert: ClawbotOpaPolicyLatencyHigh
+        expr: >
+          histogram_quantile(0.95,
+            sum(rate(clawbot_policy_decision_duration_milliseconds_bucket[5m])) by (le)
+          ) > 500
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          service: policy-decision-service
+        annotations:
+          summary: "OPA policy decision p95 latency above 500ms"
+          description: >
+            Policy decisions are slow ({{ $value | humanizeDuration }}ms p95).
+            This adds latency to every authenticated API call.
+
+  # ─── WebSocket / Realtime ────────────────────────────────────────────────────
+  - name: clawbot.websocket
+    interval: 30s
+    rules:
+      - alert: ClawbotWebSocketDropRateHigh
+        expr: >
+          sum(rate(clawbot_websocket_disconnections_total[5m])) * 60 > 10
+        for: 3m
+        labels:
+          severity: warning
+          team: platform
+          service: api-gateway-bff
+          domain: realtime
+        annotations:
+          summary: "WebSocket disconnect rate above 10/minute"
+          description: >
+            {{ $value | humanize }} WebSocket disconnections per minute.
+            Clients may be losing real-time audit event feeds.
+
+      - alert: ClawbotWebSocketConnectionsHigh
+        expr: >
+          sum(clawbot_websocket_connections_active) > 500
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          service: api-gateway-bff
+        annotations:
+          summary: "WebSocket connection count above 500"
+          description: >
+            {{ $value }} active WebSocket connections.
+            Consider scaling api-gateway-bff HPA or increasing limits.
+
+  # ─── Audit Chain Integrity ────────────────────────────────────────────────────
+  - name: clawbot.audit
+    interval: 1m
+    rules:
+      - alert: ClawbotAuditChainStalled
+        expr: >
+          sum(rate(clawbot_audit_events_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: critical
+          team: platform
+          domain: audit
+          page: "true"
+        annotations:
+          summary: "CRITICAL: Audit event chain has stalled"
+          description: >
+            No audit events have been published in the last 5 minutes.
+            The hash-chained audit ledger may be broken — financial events
+            are not being recorded. Investigate immediately.
+          runbook: "https://github.com/clawbot/marketplace/wiki/runbooks/audit-chain"
+
+  # ─── OpenTelemetry Collector Health ──────────────────────────────────────────
+  - name: clawbot.otel
+    interval: 1m
+    rules:
+      - alert: ClawbotOtelCollectorMemoryHigh
+        expr: >
+          otelcol_process_memory_rss / 1024 / 1024 > 400
+        for: 5m
+        labels:
+          severity: warning
+          team: platform
+          service: otel-collector
+        annotations:
+          summary: "OTel Collector RSS memory above 400 MiB"
+          description: >
+            OTel Collector is using {{ $value | humanize }}MiB RSS
+            (limit: 512 MiB). Risk of OOM kill and metric/trace loss.
+
+      - alert: ClawbotOtelSpanDrops
+        expr: >
+          sum(rate(otelcol_processor_dropped_spans_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          team: platform
+          service: otel-collector
+        annotations:
+          summary: "OTel Collector is dropping spans"
+          description: >
+            {{ $value | humanize }} spans/sec dropped.
+            Increase batch processor queue or scale the collector.

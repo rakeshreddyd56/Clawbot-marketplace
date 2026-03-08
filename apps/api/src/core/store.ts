@@ -25,6 +25,14 @@ export function createStore(): Store {
     balances: new Map(),
     deliverySecrets: new Map(),
     taskMilestoneNames: new Map(),
-    processedWebhookEventIds: new Set()
+    processedWebhookEventIds: new Set(),
+    ownerMismatchFlags: new Map(),
+    mismatchReviewActions: new Map(),
+    processedMoltbookWebhookEventIds: new Set(),
+    constitutionVersions: new Map(),
+    currentConstitutionVersion: 'v1',
+    constitutionAcceptances: new Map(),
+    leaseOutcomeLog: new Map(),
+    bannedOwnerHandles: new Set()
   };
 }

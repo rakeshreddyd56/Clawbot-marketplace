@@ -3,9 +3,16 @@ import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import { ZodError, z } from 'zod';
+import {
+  getSystemPrompt,
+  CONSTITUTION_VERSION,
+  type PromptContext,
+  type WorkerPromptParams
+} from '@claw/contracts';
 import { FakeMoltbookVerifier, type MoltbookVerifier } from './adapters/moltbook.js';
-import { FakeStripeAdapter, type StripeAdapter } from './adapters/stripe.js';
-import { FakeTemporalAdapter, type WorkflowAdapter } from './adapters/temporal.js';
+import { FakeStripeAdapter, WebhookSignatureError, WEBHOOK_MAX_BODY_BYTES, type StripeAdapter } from './adapters/stripe.js';
+import { type WorkflowAdapter } from './adapters/temporal.js';
+import { createTemporalAdapter } from './adapters/temporal-factory.js';
 import { parseAuthContext } from './core/context.js';
 import { DomainError, assertDomain } from './core/errors.js';
 import { AuditLedger } from './core/events.js';
@@ -14,11 +21,15 @@ import { PolicyDecisionService } from './core/policy-decision.js';
 import { PolicyEngine } from './core/policy.js';
 import { eventToChannel, parseChannelInput } from './core/realtime.js';
 import { authFromRequest, clearSessionCookie, issueSessionToken, setSessionCookie } from './core/session.js';
-import { createStore } from './core/store.js';
+import { createStoreFromEnv, loadAuditEventsFromPg, getAuditPersistence } from './core/store-factory.js';
+import { createMoltbookCacheFromEnv } from './adapters/moltbook-cache.js';
+import { createRedisFromEnv } from './adapters/redis-factory.js';
 import { ArtifactService } from './services/artifact-service.js';
 import { ExecutionService } from './services/execution-service.js';
 import { MoltbookIdentityService } from './services/moltbook-identity-service.js';
 import { PaymentWebhookService } from './services/payment-webhook-service.js';
+import { ConstitutionService } from './services/constitution-service.js';
+import { MoltbookWebhookService } from './services/moltbook-webhook-service.js';
 import { ReputationService } from './services/reputation-service.js';
 import { VaultService } from './services/vault-service.js';
 import type { AuthContext, Store } from './types/domain.js';
@@ -38,11 +49,14 @@ export type AppServices = {
   reputationService: ReputationService;
   paymentWebhookService: PaymentWebhookService;
   identityService: MoltbookIdentityService;
+  moltbookWebhookService: MoltbookWebhookService;
+  constitutionService: ConstitutionService;
 };
 
 export type CreateAppOptions = {
   services?: Partial<AppServices>;
   corsOrigins?: string[];
+  rateLimit?: { enabled: boolean };
 };
 
 const DEFAULT_AUDIENCE = 'clawbot.marketplace.local';
@@ -207,21 +221,42 @@ const workerEligibilityQuerySchema = z.object({
   agentId: z.string().min(1).optional()
 });
 
-function createServices(overrides: Partial<AppServices> = {}): AppServices {
-  const store = overrides.store ?? createStore();
+const systemPromptQuerySchema = z.object({
+  context: z.enum(['session', 'worker', 'requester', 'moderator', 'constitution']).default('session'),
+  taskId: z.string().min(1).optional()
+});
+
+async function createServices(overrides: Partial<AppServices> = {}): Promise<AppServices> {
+  const store = overrides.store ?? await createStoreFromEnv();
   const policy = overrides.policy ?? new PolicyEngine();
   const policyDecision = overrides.policyDecision ?? new PolicyDecisionService(store);
-  const audit = overrides.audit ?? new AuditLedger();
+  // TASK-HARD-003: Wire AuditLedger with PostgreSQL persistence.
+  // Load existing events from PG to restore the hash chain, and set up
+  // write-through so new events are persisted to the audit_events table.
+  let audit = overrides.audit;
+  if (!audit) {
+    const persistence = getAuditPersistence();
+    const preloadedEvents = await loadAuditEventsFromPg();
+    audit = new AuditLedger({ persistence, preloadedEvents });
+  }
   const moltbook = overrides.moltbook ?? new FakeMoltbookVerifier();
   const stripe = overrides.stripe ?? new FakeStripeAdapter();
-  const workflows = overrides.workflows ?? new FakeTemporalAdapter();
+  const workflows = overrides.workflows ?? createTemporalAdapter();
   const marketplace = overrides.marketplace ?? new MarketplaceCore(store, policy, audit, moltbook, stripe, workflows);
   const executionService = overrides.executionService ?? new ExecutionService(store);
   const artifactService = overrides.artifactService ?? new ArtifactService(store);
   const vaultService = overrides.vaultService ?? new VaultService(store);
   const reputationService = overrides.reputationService ?? new ReputationService(store);
   const paymentWebhookService = overrides.paymentWebhookService ?? new PaymentWebhookService(store);
-  const identityService = overrides.identityService ?? new MoltbookIdentityService(store, moltbook);
+  // TASK-HARD-013: Create Redis-backed Moltbook snapshot cache (graceful degradation if REDIS_URL unset)
+  const redis = createRedisFromEnv();
+  const moltbookCache = createMoltbookCacheFromEnv(redis);
+  const identityService = overrides.identityService ?? new MoltbookIdentityService(store, moltbook, moltbookCache);
+  // TASK-HARD-013: Wire webhook service with Redis cache for real-time cache invalidation
+  const moltbookWebhookService = overrides.moltbookWebhookService ?? new MoltbookWebhookService(
+    store, audit, undefined, moltbookCache
+  );
+  const constitutionService = overrides.constitutionService ?? new ConstitutionService(store, audit);
 
   return {
     store,
@@ -237,7 +272,9 @@ function createServices(overrides: Partial<AppServices> = {}): AppServices {
     vaultService,
     reputationService,
     paymentWebhookService,
-    identityService
+    identityService,
+    moltbookWebhookService,
+    constitutionService
   };
 }
 
@@ -277,6 +314,19 @@ function enforceFreshIdentity(services: AppServices, actor: AuthContext): void {
   }
 
   services.identityService.assertFreshForPrivileged(actor.actorAgentId);
+}
+
+/**
+ * TASK-ENFORCE-001: Assert that the agent has accepted the current constitution version.
+ * Called on all privileged write routes alongside enforceFreshIdentity.
+ * Admins and moderators are exempt (they govern the constitution).
+ */
+function enforceConstitutionCurrent(services: AppServices, actor: AuthContext): void {
+  if (actor.role === 'admin' || actor.role === 'moderator') {
+    return;
+  }
+
+  services.constitutionService.assertConstitutionCurrent(actor.actorAgentId);
 }
 
 function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
@@ -346,6 +396,10 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
     const body = constitutionBodySchema.parse(request.body);
     enforcePolicy(services, actor, 'agent.profile.read');
     services.identityService.assertCanActivate(actor.actorAgentId);
+
+    // TASK-ENFORCE-001: Record constitution acceptance with version tracking
+    services.constitutionService.acceptConstitution(actor.actorAgentId);
+
     return services.marketplace.acceptConstitution(actor, body.constitutionVersion);
   };
 
@@ -443,7 +497,7 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
 }
 
 export async function createApp(options: CreateAppOptions = {}): Promise<{ app: FastifyInstance; services: AppServices }> {
-  const services = createServices(options.services);
+  const services = await createServices(options.services);
   const app = Fastify({ logger: false });
 
   // BUG-HIGH-001: Restrict CORS to explicit allowlist instead of reflecting any origin.
@@ -459,6 +513,38 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   await app.register(cookie);
   await app.register(websocket);
+
+  // TASK-HARD-005: Capture raw body for Stripe webhook signature verification.
+  // This custom content type parser saves the raw body before JSON parsing,
+  // which is required for HMAC verification of Stripe webhook payloads.
+  app.addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (req, body, done) => {
+      try {
+        const rawBody = typeof body === 'string' ? body : body.toString('utf8');
+        // Store raw body on the request for later access in webhook route
+        (req as unknown as { rawBody: string }).rawBody = rawBody;
+        // For webhook routes, allow non-JSON bodies through (signature verifier handles JSON parsing).
+        // For all other routes, parse as normal JSON.
+        const isWebhookRoute = req.url?.startsWith('/v1/payments/stripe/webhooks')
+          || req.url?.startsWith('/v1/webhooks/moltbook');
+        try {
+          const parsed = JSON.parse(rawBody);
+          done(null, parsed);
+        } catch (jsonErr) {
+          if (isWebhookRoute) {
+            // Pass the raw body through — the webhook handler will verify signature first
+            done(null, rawBody);
+          } else {
+            done(jsonErr as Error, undefined);
+          }
+        }
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    }
+  );
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DomainError) {
@@ -490,6 +576,138 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.get('/health', async () => ({ status: 'ok' }));
   registerOnboardingRoutes(app, services);
+
+  // ─── TASK-ENFORCE-001: Constitution version management routes ──────────────
+
+  app.get('/v1/constitution/current', async () => {
+    return services.constitutionService.getCurrentVersion();
+  });
+
+  app.get('/v1/constitution/versions', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['moderator', 'admin']);
+    return { versions: services.constitutionService.getVersionHistory() };
+  });
+
+  app.get('/v1/agents/me/constitution/status', async (request) => {
+    const actor = auth(request);
+    enforcePolicy(services, actor, 'agent.profile.read');
+    return services.constitutionService.getAgentConstitutionStatus(actor.actorAgentId);
+  });
+
+  app.post('/v1/constitution/upgrade', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin']);
+    const body = z.object({
+      version: z.string().min(1),
+      changelog: z.string().min(1),
+      constitutionText: z.string().optional()
+    }).parse(request.body);
+
+    const result = services.constitutionService.upgradeConstitution(
+      body.version,
+      body.changelog,
+      body.constitutionText
+    );
+
+    // Broadcast WebSocket event for constitution update
+    services.audit.publish('platform.constitution_updated', 'platform', {
+      version: result.version,
+      changelog: body.changelog,
+      reAcceptanceDeadlineDays: result.reAcceptanceDeadlineDays
+    });
+
+    return result;
+  });
+
+  app.post('/v1/constitution/enforce-deadlines', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin']);
+    const suspended = services.constitutionService.enforceReAcceptanceDeadlines();
+    return { suspended, count: suspended.length };
+  });
+
+  // ─── End constitution routes ───────────────────────────────────────────────
+
+  // ─── TASK-PROMPT-002: System prompt endpoint ──────────────────────────────
+
+  app.get('/v1/agents/me/system-prompt', async (request) => {
+    const actor = auth(request);
+    enforcePolicy(services, actor, 'agent.profile.read');
+    const query = systemPromptQuerySchema.parse(request.query);
+    const promptContext = query.context as PromptContext;
+
+    let prompt: string;
+
+    if (promptContext === 'worker' && query.taskId) {
+      // Build worker prompt with task-specific data
+      const task = services.marketplace.getTaskById(query.taskId);
+      const scope = services.store.scopes.get(task.scopeManifestId);
+
+      // Find an active lease for this worker on this task
+      let activeLeaseId = '';
+      let activeContractId = '';
+      let trustTier = 'C';
+
+      for (const [, lease] of services.store.leases) {
+        if (lease.taskId === query.taskId && lease.workerAgentId === actor.actorAgentId && lease.status === 'ACTIVE') {
+          activeLeaseId = lease.leaseId;
+          break;
+        }
+      }
+
+      // Find the contract for this task
+      for (const [, contract] of services.store.contracts) {
+        if (contract.taskId === query.taskId && contract.workerAgentId === actor.actorAgentId) {
+          activeContractId = contract.contractId;
+          break;
+        }
+      }
+
+      // Get trust tier from moltbook snapshot (may not exist yet)
+      const moltbookSnapshot = services.store.moltbookSnapshots.get(actor.actorAgentId);
+      if (moltbookSnapshot) {
+        trustTier = moltbookSnapshot.trustTier;
+      }
+
+      const workerParams: WorkerPromptParams = {
+        taskId: query.taskId,
+        contractId: activeContractId || 'pending',
+        leaseId: activeLeaseId || 'pending',
+        trustTier,
+        allowedDataRefs: scope?.allowedDataRefs ?? [],
+        allowedTools: scope?.allowedTools ?? [],
+        egressAllowlist: scope?.egressAllowlist ?? [],
+        deliverableSchemaRef: scope?.deliverableSchemaRef ?? 'none',
+        acceptanceTestsRef: scope?.acceptanceTestsRef ?? 'none'
+      };
+
+      prompt = getSystemPrompt('worker', workerParams);
+    } else if (promptContext === 'worker' && !query.taskId) {
+      throw new DomainError(
+        'MISSING_TASK_ID',
+        'taskId query parameter is required when context is "worker".',
+        400
+      );
+    } else {
+      prompt = getSystemPrompt(promptContext);
+    }
+
+    services.audit.publish('agent.system_prompt.read', actor.actorAgentId, {
+      context: promptContext,
+      taskId: query.taskId ?? null
+    });
+
+    return {
+      prompt,
+      context: promptContext,
+      constitutionVersion: CONSTITUTION_VERSION,
+      injectedAt: new Date().toISOString(),
+      agentId: actor.actorAgentId
+    };
+  });
+
+  // ─── End system prompt route ──────────────────────────────────────────────
 
   app.get('/v1/sanctions/me', async (request) => {
     const actor = auth(request);
@@ -544,8 +762,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   const payoutHandler = async (request: FastifyRequest) => {
     const actor = auth(request);
     const body = amountBodySchema.parse(request.body);
-    enforcePolicy(services, actor, 'wallet.payout');
+    // TASK-HARD-013: Check identity freshness BEFORE policy so expired sessions
+    // get 401 REVERIFY_REQUIRED (actionable) instead of 403 POLICY_DENY.
+    // The policy service also checks IDENTITY_NOT_FRESH for privileged actions,
+    // but returns 403 which is less helpful for the frontend reverify flow.
     enforceFreshIdentity(services, actor);
+    enforcePolicy(services, actor, 'wallet.payout');
+    enforceConstitutionCurrent(services, actor);
 
     if (actor.role === 'worker') {
       const eligibility = services.identityService.getWorkerEligibility(actor.actorAgentId);
@@ -566,8 +789,67 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/v1/wallet/payout', payoutHandler);
   app.post('/v1/wallet/payouts', payoutHandler);
 
-  app.post('/v1/payments/stripe/webhooks', async (request) => {
-    const body = stripeWebhookBodySchema.parse(request.body);
+  // TASK-HARD-005: Stripe webhook with HMAC signature verification + idempotency.
+  // Raw body must be captured before JSON parsing for signature verification.
+  // The `stripe-signature` header is required and verified against STRIPE_WEBHOOK_SECRET.
+  app.post('/v1/payments/stripe/webhooks', {
+    config: { rawBody: true }
+  }, async (request, reply) => {
+    const signatureHeader = request.headers['stripe-signature'] as string | undefined;
+
+    if (!signatureHeader) {
+      services.audit.publish('payment.webhook_rejected', 'stripe:webhook', {
+        code: 'WEBHOOK_SIGNATURE_MISSING',
+        reason: 'Missing stripe-signature header.'
+      });
+      return reply.status(400).send({
+        error: {
+          code: 'WEBHOOK_SIGNATURE_MISSING',
+          message: 'Missing stripe-signature header. All webhook requests must include a valid Stripe signature.'
+        }
+      });
+    }
+
+    // Capture raw body: Fastify stores it on request.rawBody when configured,
+    // or we fall back to serializing the parsed body (for test compatibility).
+    const rawBody: string = (request as unknown as { rawBody?: string | Buffer }).rawBody
+      ? String((request as unknown as { rawBody?: string | Buffer }).rawBody)
+      : JSON.stringify(request.body);
+
+    // Check body size before crypto (hash-DoS mitigation)
+    if (Buffer.byteLength(rawBody, 'utf8') > WEBHOOK_MAX_BODY_BYTES) {
+      const reason = `Webhook body exceeds maximum allowed size of ${WEBHOOK_MAX_BODY_BYTES} bytes.`;
+      services.audit.publish('payment.webhook_rejected', 'stripe:webhook', {
+        code: 'WEBHOOK_SIGNATURE_INVALID',
+        reason
+      });
+      return reply.status(400).send({
+        error: {
+          code: 'WEBHOOK_SIGNATURE_INVALID',
+          message: reason
+        }
+      });
+    }
+
+    // Verify the webhook signature using the Stripe adapter
+    let event;
+    try {
+      event = services.stripe.verifyWebhookSignature(rawBody, signatureHeader);
+    } catch (err) {
+      if (err instanceof WebhookSignatureError) {
+        services.audit.publish('payment.webhook_rejected', 'stripe:webhook', {
+          code: 'WEBHOOK_SIGNATURE_INVALID',
+          reason: err.message
+        });
+        return reply.status(400).send({
+          error: {
+            code: 'WEBHOOK_SIGNATURE_INVALID',
+            message: err.message
+          }
+        });
+      }
+      throw err;
+    }
 
     const actor: AuthContext = {
       actorAgentId: 'stripe:webhook',
@@ -575,11 +857,52 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     };
 
     enforcePolicy(services, actor, 'payments.webhook', {
-      eventType: body.type
+      eventType: event.type
     });
 
-    const result = services.paymentWebhookService.handleStripeEvent(body);
-    services.audit.publish('payment.webhook_processed', body.type, result as Record<string, unknown>);
+    // Bounded idempotency set: evict oldest entries when exceeding limit
+    const MAX_PROCESSED_WEBHOOK_IDS = 10_000;
+    const idSet = services.store.processedWebhookEventIds;
+    if (idSet.size >= MAX_PROCESSED_WEBHOOK_IDS) {
+      // Sets iterate in insertion order — evict oldest entries
+      const toEvict = idSet.size - MAX_PROCESSED_WEBHOOK_IDS + 1;
+      let evicted = 0;
+      for (const oldId of idSet) {
+        if (evicted >= toEvict) break;
+        idSet.delete(oldId);
+        evicted++;
+      }
+    }
+
+    const result = services.paymentWebhookService.handleStripeEvent(event);
+
+    if (!result.duplicate) {
+      services.audit.publish('payment.webhook_processed', event.id, result as Record<string, unknown>);
+    }
+
+    return {
+      ...result,
+      processed: !result.duplicate
+    };
+  });
+
+  // TASK-HARD-013/014: Moltbook webhook with HMAC signature verification.
+  // Receives real-time trust tier changes, suspensions, owner changes, and unclaimed events.
+  // Invalidates Redis snapshot cache to prevent stale data.
+  app.post('/v1/webhooks/moltbook', async (request, reply) => {
+    const signatureHeader = (request.headers['moltbook-signature'] as string) ?? '';
+    const rawBody = typeof request.body === 'string'
+      ? request.body
+      : JSON.stringify(request.body);
+
+    const result = await services.moltbookWebhookService.handleWebhook(rawBody, signatureHeader);
+
+    if (result.processed && !result.duplicate) {
+      services.audit.publish('moltbook.webhook_processed', result.eventId ?? 'unknown', {
+        action: result.action,
+        eventId: result.eventId
+      });
+    }
 
     return result;
   });
@@ -589,6 +912,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const body = createTaskBodySchema.parse(request.body);
     enforcePolicy(services, actor, 'task.create');
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     return services.marketplace.createTask(actor, body);
   });
 
@@ -630,7 +954,9 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const { taskId } = idParamsSchema.parse(request.params);
     enforcePolicy(services, actor, 'task.eligibility.read', { taskId });
 
-    const workerId = actor.role === 'admin' ? String((request.query as Record<string, unknown>)?.agentId ?? '') || actor.actorAgentId : actor.actorAgentId;
+    // BUG-MIN-002: Validate agentId query param via Zod instead of raw cast
+    const query = workerEligibilityQuerySchema.parse(request.query);
+    const workerId = actor.role === 'admin' && query.agentId ? query.agentId : actor.actorAgentId;
     return services.identityService.getTaskEligibility(workerId, taskId);
   });
 
@@ -638,6 +964,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const actor = auth(request);
     enforcePolicy(services, actor, 'task.post');
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     const { taskId } = idParamsSchema.parse(request.params);
     return services.marketplace.postTask(actor, taskId);
   });
@@ -646,6 +973,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const actor = auth(request);
     enforcePolicy(services, actor, 'task.cancel');
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     const { taskId } = idParamsSchema.parse(request.params);
     const body = cancelTaskBodySchema.parse(request.body ?? {});
     return services.marketplace.cancelTask(actor, taskId, body.reasonCode);
@@ -654,6 +982,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/v1/tasks/:taskId/bids', async (request) => {
     const actor = auth(request);
     enforcePolicy(services, actor, 'bid.create');
+    enforceConstitutionCurrent(services, actor);
     const { taskId } = idParamsSchema.parse(request.params);
     const body = bidBodySchema.parse(request.body);
 
@@ -680,6 +1009,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const actor = auth(request);
     enforcePolicy(services, actor, 'task.reserve');
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
 
     assertDomain(actor.role === 'worker' || actor.role === 'admin', 'ROLE_FORBIDDEN', 'Only workers can reserve tasks.', 403);
 
@@ -698,6 +1028,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const body = reserveAcceptBodySchema.parse(request.body);
     enforcePolicy(services, actor, 'task.accept', { taskId, leaseId: body.leaseId });
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     return services.marketplace.acceptTask(actor, taskId, body.leaseId, body.leaseToken);
   });
 
@@ -769,6 +1100,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const actor = auth(request);
     enforcePolicy(services, actor, 'contract.milestone.start');
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
 
     const { contractId, milestoneId } = milestoneParamsSchema.parse(request.params);
     const contract = services.marketplace.getContractById(contractId);
@@ -791,6 +1123,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       milestoneId: String((request.params as Record<string, unknown>).milestoneId ?? '')
     });
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
 
     const { contractId, milestoneId } = milestoneParamsSchema.parse(request.params);
     const body = deliverBodySchema.parse(request.body);
@@ -818,6 +1151,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
       milestoneId: String((request.params as Record<string, unknown>).milestoneId ?? '')
     });
     enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
 
     const { contractId, milestoneId } = milestoneParamsSchema.parse(request.params);
     return services.marketplace.acceptMilestone(actor, {
@@ -826,9 +1160,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     });
   });
 
+  // BUG-HIGH-002: Legacy deliver/accept routes now enforce policy + identity freshness
   app.post('/v1/contracts/:contractId/deliver', async (request) => {
     const actor = auth(request);
     const { contractId } = contractParamsSchema.parse(request.params);
+    enforcePolicy(services, actor, 'contract.milestone.deliver', { contractId });
+    enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     const body = z.object({ milestoneId: z.string().min(1), content: z.string().min(1), signature: z.string().min(1) }).parse(request.body);
 
     return services.marketplace.deliverMilestone(actor, {
@@ -839,9 +1177,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     });
   });
 
+  // BUG-HIGH-002: Legacy deliver/accept routes now enforce policy + identity freshness
   app.post('/v1/contracts/:contractId/accept', async (request) => {
     const actor = auth(request);
     const { contractId } = contractParamsSchema.parse(request.params);
+    enforcePolicy(services, actor, 'contract.milestone.accept', { contractId });
+    enforceFreshIdentity(services, actor);
+    enforceConstitutionCurrent(services, actor);
     const body = milestoneAcceptBodySchema.parse(request.body);
 
     return services.marketplace.acceptMilestone(actor, {
@@ -949,6 +1291,14 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     const { disputeId } = disputeParamsSchema.parse(request.params);
     const body = disputeResolveBodySchema.parse(request.body);
     return services.marketplace.resolveDispute(actor, disputeId, body.ruling, body.targetAgentId);
+  });
+
+  // Admin-only endpoint to sweep expired disputes and apply 72h auto-ruling
+  app.post('/v1/disputes/sweep', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin']);
+    const autoRuled = services.marketplace.sweepExpiredDisputes();
+    return { swept: autoRuled.length, disputes: autoRuled };
   });
 
   app.get('/v1/reputation/:agentId', async (request) => {
@@ -1085,6 +1435,13 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     socket.on('close', () => {
       unsubscribe();
     });
+  });
+
+  // TASK-HARD-004: Graceful shutdown of Temporal connection on app close
+  app.addHook('onClose', async () => {
+    if ('close' in services.workflows && typeof services.workflows.close === 'function') {
+      await (services.workflows as { close: () => Promise<void> }).close();
+    }
   });
 
   return { app, services };

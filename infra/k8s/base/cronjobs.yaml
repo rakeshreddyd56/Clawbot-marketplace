@@ -1,0 +1,282 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Kubernetes CronJobs
+#
+# Background jobs that maintain marketplace integrity without Temporal Cloud:
+#
+#   expire-leases        — Expires assignment leases older than 2 minutes
+#                          without a recent heartbeat. Runs every 30 seconds
+#                          via a 1-minute CronJob (closest K8s allows).
+#
+#   lift-suspensions     — Lifts time-limited SUSPEND sanctions after 168h.
+#                          Supports TASK-FEAT-004 (sanction auto-expiry).
+#                          Runs hourly.
+#
+#   audit-chain-verify   — Calls GET /v1/events/verify to check the audit
+#                          hash-chain integrity. Writes result to stdout
+#                          (visible in `kubectl logs`). Runs daily.
+#
+# Note: These jobs call internal API endpoints. In production, they should
+# be protected by a service-to-service auth token (INTERNAL_CRON_TOKEN).
+# The API must check this token on /internal/cron/* routes.
+#
+# When Temporal Cloud is wired up (TASK-HARD-004), these CronJobs can be
+# removed — Temporal handles timers natively.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Lease Expiry CronJob ──────────────────────────────────────────────────────
+# Runs every minute. Each invocation fires the expire-leases endpoint,
+# which scans all active leases for expired heartbeats and closes them.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: expire-leases
+  namespace: clawbot-marketplace
+  labels:
+    app: expire-leases
+    app.kubernetes.io/name: expire-leases
+    app.kubernetes.io/part-of: clawbot-marketplace
+    app.kubernetes.io/component: cronjob
+spec:
+  # Runs every minute (K8s CronJob minimum granularity)
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid          # Never run two instances at once
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 30        # Skip if cluster was down > 30s
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 55      # Must complete in < 55s (before next run)
+      backoffLimit: 0                # Don't retry on failure — next run picks up
+      template:
+        metadata:
+          labels:
+            app: expire-leases
+            app.kubernetes.io/part-of: clawbot-marketplace
+        spec:
+          serviceAccountName: clawbot-workload
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: expire-leases
+              image: curlimages/curl:8.11.0
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running expire-leases..."
+                  HTTP_STATUS=$(curl -s -o /tmp/resp -w "%{http_code}" \
+                    -X POST \
+                    -H "Content-Type: application/json" \
+                    -H "X-Internal-Cron-Token: ${INTERNAL_CRON_TOKEN}" \
+                    http://api-gateway-bff/internal/cron/expire-leases)
+                  cat /tmp/resp
+                  if [ "$HTTP_STATUS" != "200" ]; then
+                    echo "ERROR: expire-leases returned HTTP $HTTP_STATUS"
+                    exit 1
+                  fi
+                  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Done. HTTP $HTTP_STATUS"
+              env:
+                - name: INTERNAL_CRON_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: clawbot-api-secrets
+                      key: INTERNAL_CRON_TOKEN
+                      optional: true  # Token is optional in dev; API falls back gracefully
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false  # curl writes to /tmp
+                runAsNonRoot: true
+                runAsUser: 1001
+                capabilities:
+                  drop:
+                    - ALL
+---
+# ── Suspension Auto-Lift CronJob ──────────────────────────────────────────────
+# Runs hourly. Finds SUSPEND sanctions older than 168h and lifts them.
+# Supports TASK-FEAT-004: time-limited suspension expiry.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: lift-suspensions
+  namespace: clawbot-marketplace
+  labels:
+    app: lift-suspensions
+    app.kubernetes.io/name: lift-suspensions
+    app.kubernetes.io/part-of: clawbot-marketplace
+    app.kubernetes.io/component: cronjob
+spec:
+  schedule: "0 * * * *"             # Every hour at :00
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 300    # 5 minutes max
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: lift-suspensions
+            app.kubernetes.io/part-of: clawbot-marketplace
+        spec:
+          serviceAccountName: clawbot-workload
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: lift-suspensions
+              image: curlimages/curl:8.11.0
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Running lift-suspensions..."
+                  HTTP_STATUS=$(curl -s -o /tmp/resp -w "%{http_code}" \
+                    -X POST \
+                    -H "Content-Type: application/json" \
+                    -H "X-Internal-Cron-Token: ${INTERNAL_CRON_TOKEN}" \
+                    http://api-gateway-bff/internal/cron/lift-suspensions)
+                  cat /tmp/resp
+                  if [ "$HTTP_STATUS" != "200" ]; then
+                    echo "ERROR: lift-suspensions returned HTTP $HTTP_STATUS"
+                    exit 1
+                  fi
+                  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Done. HTTP $HTTP_STATUS"
+              env:
+                - name: INTERNAL_CRON_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: clawbot-api-secrets
+                      key: INTERNAL_CRON_TOKEN
+                      optional: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                runAsNonRoot: true
+                runAsUser: 1001
+                capabilities:
+                  drop:
+                    - ALL
+---
+# ── Audit Chain Verification CronJob ─────────────────────────────────────────
+# Runs daily at 03:00 UTC. Calls the audit chain verify endpoint and logs
+# any hash chain breaks. Results are visible in `kubectl logs`.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: audit-chain-verify
+  namespace: clawbot-marketplace
+  labels:
+    app: audit-chain-verify
+    app.kubernetes.io/name: audit-chain-verify
+    app.kubernetes.io/part-of: clawbot-marketplace
+    app.kubernetes.io/component: cronjob
+spec:
+  schedule: "0 3 * * *"             # Daily at 03:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7     # Keep 7 days of results
+  failedJobsHistoryLimit: 7
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600    # 10 minutes for large audit logs
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: audit-chain-verify
+            app.kubernetes.io/part-of: clawbot-marketplace
+        spec:
+          serviceAccountName: clawbot-workload
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: audit-chain-verify
+              image: curlimages/curl:8.11.0
+              imagePullPolicy: IfNotPresent
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+                  echo "[$DATE] Starting audit chain verification..."
+
+                  HTTP_STATUS=$(curl -s -o /tmp/resp -w "%{http_code}" \
+                    -H "X-Internal-Cron-Token: ${INTERNAL_CRON_TOKEN}" \
+                    http://api-gateway-bff/v1/events/verify)
+
+                  echo "[$DATE] HTTP $HTTP_STATUS"
+                  cat /tmp/resp
+                  echo ""
+
+                  if [ "$HTTP_STATUS" != "200" ]; then
+                    echo "[$DATE] ERROR: audit-chain-verify returned HTTP $HTTP_STATUS"
+                    exit 1
+                  fi
+
+                  # Check if valid=true in response
+                  VALID=$(cat /tmp/resp | grep -o '"valid":true' | wc -l | tr -d ' ')
+                  if [ "$VALID" -eq 0 ]; then
+                    echo "[$DATE] CRITICAL: Audit chain integrity check FAILED!"
+                    echo "[$DATE] Details: $(cat /tmp/resp)"
+                    # In production, send a PagerDuty alert here
+                    exit 2
+                  fi
+
+                  echo "[$DATE] Audit chain integrity: OK"
+              env:
+                - name: INTERNAL_CRON_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: clawbot-api-secrets
+                      key: INTERNAL_CRON_TOKEN
+                      optional: true
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 50m
+                  memory: 32Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                runAsNonRoot: true
+                runAsUser: 1001
+                capabilities:
+                  drop:
+                    - ALL

@@ -31,7 +31,13 @@ export const AgentProfileSchema = z.object({
   status: AgentStatusSchema,
   riskTier: z.enum(['LOW', 'MEDIUM', 'HIGH']).default('LOW'),
   kycTier: z.enum(['NONE', 'BASIC', 'ENHANCED']).default('NONE'),
-  createdAt: z.string()
+  createdAt: z.string(),
+  /** TASK-ENFORCE-001: Constitution version the agent last accepted */
+  constitutionVersionAccepted: z.string().optional(),
+  /** TASK-ENFORCE-001: Timestamp when the agent accepted the constitution */
+  constitutionAcceptedAt: z.string().optional(),
+  /** TASK-ENFORCE-001: Deadline by which agent must re-accept after a constitution upgrade */
+  constitutionReAcceptanceDeadline: z.string().optional()
 });
 export type AgentProfile = z.infer<typeof AgentProfileSchema>;
 
@@ -136,6 +142,10 @@ export const DisputeCaseSchema = z.object({
   status: z.enum(['OPEN', 'AUTO_DECIDED', 'UNDER_APPEAL', 'FINAL']),
   autoDecision: z.string().optional(),
   appealDeadlineAt: z.string(),
+  /** TASK-ENFORCE-004: 72h deadline for the target party to respond */
+  responseDeadlineAt: z.string().optional(),
+  /** TASK-ENFORCE-004: Timestamp when the target party responded (appeal/resolve) */
+  respondedAt: z.string().optional(),
   finalRuling: z.string().optional(),
   createdAt: z.string()
 });
@@ -171,8 +181,14 @@ export const SanctionActionSchema = z.object({
   type: z.enum(['SUSPEND', 'BAN']),
   durationHours: z.number().int().positive().optional(),
   reasonCode: z.string(),
-  status: z.enum(['ACTIVE', 'EXPIRED']),
-  effectiveAt: z.string()
+  status: z.enum(['ACTIVE', 'EXPIRED', 'APPEALED', 'REVERSED']),
+  effectiveAt: z.string(),
+  /** TASK-FEAT-004: Appeal fields */
+  appealedAt: z.string().optional(),
+  appealReason: z.string().optional(),
+  reviewedAt: z.string().optional(),
+  reviewedBy: z.string().optional(),
+  reviewRuling: z.enum(['UPHELD', 'REVERSED']).optional()
 });
 export type SanctionAction = z.infer<typeof SanctionActionSchema>;
 
@@ -261,7 +277,8 @@ export const ActionBlockReasonSchema = z.object({
     'TRUST_TIER_LIMITED',
     'SANCTIONED',
     'MISSING_CAPABILITIES',
-    'ROLE_NOT_ALLOWED'
+    'ROLE_NOT_ALLOWED',
+    'CONSTITUTION_OUTDATED'
   ]),
   message: z.string(),
   blocking: z.boolean()
@@ -342,3 +359,136 @@ export const AuditEventSchema = z.object({
   hash: z.string()
 });
 export type AuditEvent = z.infer<typeof AuditEventSchema>;
+
+// ─── TASK-HARD-012: Owner mismatch moderation schemas ───────────────────────
+
+export const OwnerMismatchFlagSchema = z.object({
+  flagId: z.string(),
+  agentId: z.string(),
+  previousHandle: z.string(),
+  newHandle: z.string(),
+  detectedAt: z.string(),
+  resolvedAt: z.string().optional(),
+  resolution: z.enum(['cleared', 'banned']).optional(),
+  resolvedBy: z.string().optional()
+});
+export type OwnerMismatchFlag = z.infer<typeof OwnerMismatchFlagSchema>;
+
+export const MismatchReviewActionSchema = z.object({
+  actionId: z.string(),
+  flagId: z.string(),
+  moderatorId: z.string(),
+  actionType: z.enum(['cleared', 'banned']),
+  notes: z.string().optional(),
+  actedAt: z.string()
+});
+export type MismatchReviewAction = z.infer<typeof MismatchReviewActionSchema>;
+
+// ─── TASK-HARD-014: Moltbook webhook event schemas ──────────────────────────
+
+export const MoltbookWebhookEventSchema = z.object({
+  eventId: z.string(),
+  eventType: z.string(),
+  timestamp: z.string(),
+  agentId: z.string(),
+  payload: z.record(z.unknown())
+});
+export type MoltbookWebhookEvent = z.infer<typeof MoltbookWebhookEventSchema>;
+
+export const MoltbookTrustTierChangedPayloadSchema = z.object({
+  previousTier: TrustTierSchema,
+  newTier: TrustTierSchema,
+  karma: z.number(),
+  posts: z.number(),
+  comments: z.number()
+});
+
+export const MoltbookSuspendedPayloadSchema = z.object({
+  reason: z.string(),
+  suspendedAt: z.string()
+});
+
+export const MoltbookOwnerChangedPayloadSchema = z.object({
+  previousOwnerHandle: z.string(),
+  newOwnerHandle: z.string()
+});
+
+export const MoltbookUnclaimedPayloadSchema = z.object({
+  unclaimedAt: z.string()
+});
+
+export type MoltbookWebhookResult = {
+  accepted: boolean;
+  action: string;
+  processed: boolean;
+  duplicate?: boolean;
+  eventId: string;
+};
+
+// ─── TASK-ENFORCE-001: Constitution version tracking ─────────────────────────
+
+export const ConstitutionVersionRecordSchema = z.object({
+  version: z.string(),
+  publishedAt: z.string(),
+  sha256Hash: z.string(),
+  changelog: z.string(),
+  reAcceptanceDeadlineDays: z.number().int().positive().default(7)
+});
+export type ConstitutionVersionRecord = z.infer<typeof ConstitutionVersionRecordSchema>;
+
+// ─── Constitution Schemas ────────────────────────────────────────────────────
+// Added by rataa-research agent per research recommendation (Section 7.1.2)
+
+export const ConstitutionRuleCategorySchema = z.enum([
+  'identity',
+  'conduct',
+  'financial',
+  'data',
+  'dispute',
+  'platform'
+]);
+export type ConstitutionRuleCategory = z.infer<typeof ConstitutionRuleCategorySchema>;
+
+export const ConstitutionRuleSchema = z.object({
+  ruleId: z.string(),
+  category: ConstitutionRuleCategorySchema,
+  title: z.string(),
+  text: z.string()
+});
+export type ConstitutionRule = z.infer<typeof ConstitutionRuleSchema>;
+
+export const ConstitutionSchema = z.object({
+  version: z.string(),
+  acceptedAt: z.string(),
+  agentId: z.string(),
+  constitutionHash: z.string(),
+  rules: z.array(ConstitutionRuleSchema)
+});
+export type Constitution = z.infer<typeof ConstitutionSchema>;
+
+export const ConstitutionAcceptanceSchema = z.object({
+  agentId: z.string(),
+  constitutionVersion: z.string(),
+  constitutionHash: z.string(),
+  acceptedAt: z.string(),
+  ipHash: z.string().optional(),
+  auditEventId: z.string().optional()
+});
+export type ConstitutionAcceptance = z.infer<typeof ConstitutionAcceptanceSchema>;
+
+// ─── System Prompts ─────────────────────────────────────────────────────────
+export {
+  CONSTITUTION_VERSION,
+  CONSTITUTION_HASH,
+  INSTITUTION_RULES,
+  UNIVERSAL_SYSTEM_PROMPT,
+  REQUESTER_SYSTEM_PROMPT,
+  MODERATOR_SYSTEM_PROMPT,
+  buildWorkerSystemPrompt,
+  buildConstitutionPrompt,
+  getSystemPrompt,
+  type RuleCategory,
+  type InstitutionRule,
+  type WorkerPromptParams,
+  type PromptContext
+} from './system-prompts.js';

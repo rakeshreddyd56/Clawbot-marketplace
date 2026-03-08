@@ -3,6 +3,8 @@ import type {
   ArtifactRecord,
   AssignmentLease,
   CapabilityManifest,
+  ConstitutionAcceptance,
+  ConstitutionVersionRecord,
   ContractTerms,
   DataGrant,
   DisputeCase,
@@ -10,7 +12,9 @@ import type {
   EvidencePack,
   ExecutionSession,
   LedgerEntry,
+  MismatchReviewAction,
   MoltbookVerificationSnapshot,
+  OwnerMismatchFlag,
   PolicyDecision,
   ReputationScore,
   SanctionAction,
@@ -52,6 +56,22 @@ export type Store = {
   taskMilestoneNames: Map<string, string[]>;
   /** TASK-HARD-005: Processed Stripe webhook event IDs for idempotency. */
   processedWebhookEventIds: Set<string>;
+  /** TASK-HARD-012: Owner mismatch flags for moderation. Key: flagId */
+  ownerMismatchFlags: Map<string, OwnerMismatchFlag>;
+  /** TASK-HARD-012: Mismatch review actions log. Key: actionId */
+  mismatchReviewActions: Map<string, MismatchReviewAction>;
+  /** TASK-HARD-014: Processed Moltbook webhook event IDs for replay protection. */
+  processedMoltbookWebhookEventIds: Set<string>;
+  /** TASK-ENFORCE-001: Constitution version history. Key: version string */
+  constitutionVersions: Map<string, ConstitutionVersionRecord>;
+  /** TASK-ENFORCE-001: Current active constitution version string */
+  currentConstitutionVersion: string;
+  /** TASK-ENFORCE-001: Per-agent constitution acceptance records. Key: agentId */
+  constitutionAcceptances: Map<string, ConstitutionAcceptance>;
+  /** TASK-ENFORCE-006: Ghost reservation tracking. Key: agentId → list of lease outcomes with timestamps */
+  leaseOutcomeLog: Map<string, { leaseId: string; outcome: 'EXPIRED' | 'CLOSED'; timestamp: string }[]>;
+  /** TASK-ENFORCE-007: Banned owner X handles. Prevents re-registration under new Moltbook accounts. */
+  bannedOwnerHandles: Set<string>;
 };
 
 export type AuthContext = {

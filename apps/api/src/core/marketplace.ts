@@ -154,6 +154,10 @@ export class MarketplaceCore {
     const resp = await this.stripe.createTopup(actor.actorAgentId, amount);
     assertDomain(resp.status === 'succeeded', 'TOPUP_FAILED', 'Top-up failed.', 502);
 
+    // BUG-MED-005: Double-entry bookkeeping — treasury counterparty for external monetary inflow.
+    // treasury:inbound is credited (represents money received from external payment system).
+    // Agent account is also credited — total platform assets increase by `amount`.
+    this.credit('treasury:inbound', amount, 'wallet.topup', 'topup', resp.topupId);
     this.credit(actor.actorAgentId, amount, 'wallet.topup', 'topup', resp.topupId);
     this.publish('wallet.topped_up', actor.actorAgentId, { amount, topupId: resp.topupId });
 
@@ -244,6 +248,12 @@ export class MarketplaceCore {
     this.store.tasks.set(taskId, updated);
 
     this.publish('task.posted', taskId, {});
+
+    // TASK-HARD-004: Start the task lifecycle workflow so it can receive signals
+    void this.workflows.startWorkflow('taskLifecycleWorkflow', taskId, [taskId]).catch(() => {
+      return; // fire-and-forget — workflow start failure is non-blocking
+    });
+
     return updated;
   }
 
@@ -282,6 +292,22 @@ export class MarketplaceCore {
     const bids = this.store.bids.get(taskId) ?? [];
     const hasBid = bids.some((bid) => bid.workerAgentId === actor.actorAgentId);
     assertDomain(hasBid, 'BID_REQUIRED', 'Worker must place a bid before reserving.', 409);
+
+    // TASK-ENFORCE-003: Shill bidding detection — same ownerXHandle cross-check
+    const requesterSnapshot = this.store.moltbookSnapshots.get(task.requesterAgentId);
+    const workerSnapshot = this.store.moltbookSnapshots.get(actor.actorAgentId);
+    if (requesterSnapshot && workerSnapshot) {
+      const requesterHandle = requesterSnapshot.agent.owner.xHandle;
+      const workerHandle = workerSnapshot.agent.owner.xHandle;
+      if (requesterHandle === workerHandle) {
+        this.publish('violation.shill_bid_detected', taskId, {
+          requesterAgentId: task.requesterAgentId,
+          workerAgentId: actor.actorAgentId,
+          ownerXHandle: requesterHandle
+        });
+        assertDomain(false, 'SHILL_BID_DETECTED', 'Requester and worker share the same owner; shill bidding is prohibited.', 403);
+      }
+    }
 
     this.assertWorkerEligibleForTask(actor.actorAgentId, taskId);
 
@@ -396,11 +422,22 @@ export class MarketplaceCore {
     this.leaseSecrets.delete(leaseId);
     this.store.tasks.set(taskId, { ...task, status: 'ASSIGNED' });
 
+    // TASK-ENFORCE-006: Track successful lease closure for ghost ratio calculation
+    this.logLeaseOutcome(lease.workerAgentId, leaseId, 'CLOSED');
+
     this.publish('contract.created', contract.contractId, {
       taskId,
       requesterAgentId: contract.requesterAgentId,
       workerAgentId: contract.workerAgentId,
       budget: task.budget
+    });
+
+    // TASK-HARD-004: Start the contract execution workflow for milestone orchestration
+    void this.workflows.startWorkflow('contractExecutionWorkflow', contract.contractId, [{
+      contractId: contract.contractId,
+      milestoneIds: milestones.map((m) => m.milestoneId)
+    }]).catch(() => {
+      return; // fire-and-forget — workflow start failure is non-blocking
     });
 
     return contract;
@@ -443,6 +480,21 @@ export class MarketplaceCore {
 
     assertDomain(valid, 'INVALID_ARTIFACT_SIGNATURE', 'Artifact signature invalid.', 400);
 
+    // TASK-ENFORCE-005: Double-claim artifact detection (Rule F-4)
+    // Reject delivery if the same artifact content (SHA256) was already delivered to a different contract
+    const existingArtifact = this.findArtifactBySha256(payloadHash, input.contractId);
+    if (existingArtifact) {
+      this.publish('violation.double_claim_detected', contract.contractId, {
+        sha256: payloadHash,
+        newContractId: input.contractId,
+        newMilestoneId: input.milestoneId,
+        workerAgentId: actor.actorAgentId,
+        conflictingArtifactId: existingArtifact.artifactId,
+        conflictingContractId: existingArtifact.contractId ?? 'unknown'
+      });
+      throw new DomainError('DUPLICATE_ARTIFACT', `Artifact content already delivered to contract ${existingArtifact.contractId ?? 'unknown'}. Double-claiming is prohibited (Rule F-4).`, 409);
+    }
+
     const artifact = ArtifactRecordSchema.parse({
       artifactId: uid('artifact'),
       executionId: uid('exec'),
@@ -450,6 +502,8 @@ export class MarketplaceCore {
       signature: input.signature,
       storageUri: `memory://artifacts/${contract.contractId}/${input.milestoneId}`,
       submittedAt: nowIso(),
+      contractId: input.contractId,
+      milestoneId: input.milestoneId,
       validationStatus: 'VALID'
     });
 
@@ -527,6 +581,7 @@ export class MarketplaceCore {
       403
     );
 
+    const responseDeadline = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
     const dispute = DisputeCaseSchema.parse({
       disputeId: uid('dispute'),
       contractId: contract.contractId,
@@ -534,7 +589,8 @@ export class MarketplaceCore {
       reasonCode: input.reasonCode,
       status: 'AUTO_DECIDED',
       autoDecision: `freeze_and_review:${input.againstAgentId}`,
-      appealDeadlineAt: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+      appealDeadlineAt: responseDeadline,
+      responseDeadlineAt: responseDeadline,
       createdAt: nowIso()
     });
 
@@ -547,6 +603,25 @@ export class MarketplaceCore {
       contractId: contract.contractId,
       againstAgentId: input.againstAgentId,
       autoDecision: dispute.autoDecision
+    });
+
+    // TASK-HARD-004: Start dispute resolution workflow for appeal window management
+    void this.workflows.startWorkflow('disputeResolutionWorkflow', dispute.disputeId, [{
+      disputeId: dispute.disputeId,
+      contractId: contract.contractId,
+      openedBy: actor.actorAgentId
+    }]).catch(() => {
+      return; // fire-and-forget
+    });
+
+    // TASK-HARD-004 + TASK-ENFORCE-004: Start 72h response deadline workflow
+    void this.workflows.startWorkflow('disputeDeadlineWorkflow', `deadline:${dispute.disputeId}`, [{
+      disputeId: dispute.disputeId,
+      contractId: contract.contractId,
+      openedBy: actor.actorAgentId,
+      againstAgentId: input.againstAgentId
+    }]).catch(() => {
+      return; // fire-and-forget
     });
 
     return dispute;
@@ -567,7 +642,8 @@ export class MarketplaceCore {
 
     const updated: DisputeCase = {
       ...dispute,
-      status: 'UNDER_APPEAL'
+      status: 'UNDER_APPEAL',
+      respondedAt: nowIso()
     };
 
     this.store.disputes.set(disputeId, updated);
@@ -666,6 +742,126 @@ export class MarketplaceCore {
     });
 
     return updated;
+  }
+
+  /**
+   * Sweep expired disputes: auto-rule in favor of the opener when the
+   * 72-hour appeal deadline passes without a response (appeal or resolve).
+   * Default ruling: refund_requester (opener gets funds back).
+   * Returns the list of disputes that were auto-ruled.
+   */
+  sweepExpiredDisputes(): DisputeCase[] {
+    const now = new Date();
+    const autoRuled: DisputeCase[] = [];
+
+    for (const dispute of this.store.disputes.values()) {
+      // Only auto-rule disputes that are still in AUTO_DECIDED status
+      // (i.e. no appeal filed and no moderator resolution yet)
+      if (dispute.status !== 'AUTO_DECIDED') continue;
+
+      const deadline = new Date(dispute.responseDeadlineAt ?? dispute.appealDeadlineAt);
+      if (now <= deadline) continue;
+
+      // Expired — apply default ruling
+      const contract = this.getContract(dispute.contractId);
+
+      // Determine default ruling: refund the opener (requester/worker who filed)
+      // and sanction the against-party (extracted from autoDecision field)
+      const againstAgentId = dispute.autoDecision?.split(':')[1];
+      if (!againstAgentId) continue;
+
+      const escrowAccount = this.escrowAccount(contract.contractId);
+      const escrowBalance = this.getBalance(escrowAccount);
+
+      // Default ruling is refund_requester if opener is requester,
+      // pay_worker if opener is worker
+      const defaultRuling: 'pay_worker' | 'refund_requester' =
+        dispute.openedBy === contract.requesterAgentId ? 'refund_requester' : 'pay_worker';
+
+      if (escrowBalance > 0) {
+        const recipient = defaultRuling === 'refund_requester'
+          ? contract.requesterAgentId
+          : contract.workerAgentId;
+        this.debit(escrowAccount, escrowBalance, 'dispute.auto_ruling', 'dispute', dispute.disputeId);
+        this.credit(recipient, escrowBalance, 'dispute.auto_ruling', 'dispute', dispute.disputeId);
+      }
+
+      // Apply penalty slash to the non-responding party
+      const penaltyPct = contract.penaltySchedule?.disputeSlashPct ?? 20;
+      const slashBase = this.getBalance(againstAgentId);
+      const slashAmount = Number((slashBase * (penaltyPct / 100)).toFixed(2));
+      if (slashAmount > 0) {
+        this.debit(againstAgentId, slashAmount, 'penalty.auto_slash', 'dispute', dispute.disputeId);
+        this.credit('treasury:slashing', slashAmount, 'penalty.auto_slash', 'dispute', dispute.disputeId);
+        this.publish('wallet.slashed', againstAgentId, {
+          disputeId: dispute.disputeId,
+          slashAmount,
+          penaltyPct,
+          reason: 'auto_ruling_no_response'
+        });
+      }
+
+      // Apply progressive sanction
+      this.applyProgressiveSanction(againstAgentId, 'DISPUTE_NO_RESPONSE');
+
+      // Finalize the dispute
+      const updated: DisputeCase = {
+        ...dispute,
+        status: 'FINAL',
+        finalRuling: defaultRuling
+      };
+      this.store.disputes.set(dispute.disputeId, updated);
+
+      // Generate evidence pack
+      const evidencePackId = uid('evidence');
+      this.store.evidencePacks.set(
+        evidencePackId,
+        EvidencePackSchema.parse({
+          evidencePackId,
+          disputeId: dispute.disputeId,
+          contractId: contract.contractId,
+          artifactIds: [...this.store.artifacts.values()]
+            .filter((a) => a.contractId === contract.contractId)
+            .map((a) => a.artifactId),
+          eventIds: this.audit.getByEntity(dispute.disputeId).map((e) => e.eventId),
+          generatedAt: nowIso()
+        })
+      );
+
+      // Release escrow lock
+      const escrowLock = this.store.escrowLocks.get(contract.contractId);
+      if (escrowLock) {
+        const balanceLeft = this.getBalance(escrowAccount);
+        this.store.escrowLocks.set(contract.contractId, {
+          ...escrowLock,
+          amount: balanceLeft,
+          status: balanceLeft > 0 ? 'SLASHED' : 'RELEASED',
+          updatedAt: nowIso()
+        });
+      }
+
+      // Transition task to RESOLVED
+      const task = this.getTask(contract.taskId);
+      this.store.tasks.set(task.taskId, { ...task, status: 'RESOLVED' });
+
+      // TASK-ENFORCE-004: Emit both the legacy event and the spec-required event
+      this.publish('dispute.default_ruling', dispute.disputeId, {
+        ruling: defaultRuling,
+        targetAgentId: againstAgentId,
+        reason: 'RESPONSE_TIMEOUT',
+        responseDeadlineAt: dispute.responseDeadlineAt ?? dispute.appealDeadlineAt
+      });
+
+      this.publish('dispute.auto_ruled', dispute.disputeId, {
+        ruling: defaultRuling,
+        targetAgentId: againstAgentId,
+        reason: 'RESPONSE_TIMEOUT'
+      });
+
+      autoRuled.push(updated);
+    }
+
+    return autoRuled;
   }
 
   listEvents(entityId: string) {
@@ -808,6 +1004,11 @@ export class MarketplaceCore {
     }
 
     this.publish('lease.expired', lease.taskId, { leaseId: lease.leaseId });
+
+    // TASK-ENFORCE-006: Track expired lease and check for ghost reservation pattern
+    this.logLeaseOutcome(lease.workerAgentId, lease.leaseId, 'EXPIRED');
+    this.checkGhostReservation(lease.workerAgentId);
+
     return expiredLease;
   }
 
@@ -944,7 +1145,9 @@ export class MarketplaceCore {
     assertDomain(amount > 0, 'INVALID_AMOUNT', 'Payout amount must be >0', 400);
     this.requireActive(actor.actorAgentId);
     const payout = await this.stripe.createPayout(actor.actorAgentId, amount);
+    // BUG-MED-005: Double-entry bookkeeping — treasury counterparty for external monetary outflow
     this.debit(actor.actorAgentId, amount, 'wallet.payout_request', 'payout', payout.payoutId);
+    this.credit('treasury:outbound', amount, 'wallet.payout_request', 'payout', payout.payoutId);
     this.publish('wallet.payout_requested', actor.actorAgentId, { amount });
     return { status: payout.status, payoutId: payout.payoutId, balance: this.getBalance(actor.actorAgentId) };
   }
@@ -984,6 +1187,14 @@ export class MarketplaceCore {
     const nextStatus = sanction.type === 'BAN' ? 'BANNED' : 'SUSPENDED';
     this.store.agents.set(agentId, { ...agent, profile: { ...agent.profile, status: nextStatus } });
 
+    // TASK-ENFORCE-007: Track banned owner handles to prevent re-registration
+    if (sanction.type === 'BAN') {
+      const snapshot = this.store.moltbookSnapshots.get(agentId);
+      if (snapshot?.agent?.owner?.xHandle) {
+        this.store.bannedOwnerHandles.add(snapshot.agent.owner.xHandle);
+      }
+    }
+
     this.publish('sanction.applied', agentId, { type: sanction.type, reasonCode });
   }
 
@@ -991,5 +1202,67 @@ export class MarketplaceCore {
     if (!allowed.includes(actor.role)) {
       throw new DomainError('ROLE_FORBIDDEN', 'Forbidden for role.', 403);
     }
+  }
+
+  /**
+   * TASK-ENFORCE-006: Log a lease outcome (EXPIRED or CLOSED) for ghost reservation tracking.
+   */
+  private logLeaseOutcome(agentId: string, leaseId: string, outcome: 'EXPIRED' | 'CLOSED'): void {
+    const log = this.store.leaseOutcomeLog.get(agentId) ?? [];
+    log.push({ leaseId, outcome, timestamp: nowIso() });
+    this.store.leaseOutcomeLog.set(agentId, log);
+  }
+
+  /**
+   * TASK-ENFORCE-006: Check if a worker exhibits ghost reservation behavior.
+   *
+   * Ghost reservation = repeatedly reserving tasks and letting leases expire
+   * without ever completing (accepting) the task. This wastes requester time.
+   *
+   * Detection thresholds:
+   * - Minimum 3 lease outcomes before evaluating (avoid penalizing new workers)
+   * - Ghost ratio ≥ 60% expired leases triggers auto-sanction
+   * - Uses rolling window of last 20 lease outcomes to avoid ancient history bias
+   */
+  private checkGhostReservation(agentId: string): void {
+    const MINIMUM_LEASES = 3;
+    const GHOST_RATIO_THRESHOLD = 0.6;
+    const ROLLING_WINDOW = 20;
+
+    const fullLog = this.store.leaseOutcomeLog.get(agentId) ?? [];
+    if (fullLog.length < MINIMUM_LEASES) {
+      return;
+    }
+
+    // Use only the most recent outcomes within the rolling window
+    const log = fullLog.slice(-ROLLING_WINDOW);
+    const expiredCount = log.filter((entry) => entry.outcome === 'EXPIRED').length;
+    const ghostRatio = expiredCount / log.length;
+
+    if (ghostRatio < GHOST_RATIO_THRESHOLD) {
+      return;
+    }
+
+    this.publish('violation.ghost_reservation_detected', agentId, {
+      expiredCount,
+      totalLeases: log.length,
+      ghostRatio: Number(ghostRatio.toFixed(2))
+    });
+
+    this.applyProgressiveSanction(agentId, 'GHOST_RESERVATION');
+  }
+
+  /**
+   * TASK-ENFORCE-005: Find an existing artifact with the same SHA256 hash
+   * that belongs to a different contract. Returns the conflicting artifact
+   * or undefined if no duplicate exists.
+   */
+  private findArtifactBySha256(hash: string, currentContractId: string) {
+    for (const artifact of this.store.artifacts.values()) {
+      if (artifact.sha256 === hash && artifact.contractId !== currentContractId) {
+        return artifact;
+      }
+    }
+    return undefined;
   }
 }

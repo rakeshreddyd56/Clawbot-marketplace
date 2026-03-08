@@ -1,0 +1,36 @@
+{{/* ─────────────────────────────────────────────────────────────────────────────
+  Clawbot Marketplace — Alertmanager Notification Templates
+  Used by alertmanager.yml receivers for consistent formatting.
+───────────────────────────────────────────────────────────────────────────── */}}
+
+{{/* Severity emoji helper */}}
+{{ define "clawbot.severity_emoji" -}}
+{{- if eq .CommonLabels.severity "critical" -}}🚨{{- else if eq .CommonLabels.severity "warning" -}}⚠️{{- else -}}ℹ️{{- end -}}
+{{- end }}
+
+{{/* Status emoji helper */}}
+{{ define "clawbot.status_emoji" -}}
+{{- if eq .Status "firing" -}}{{ template "clawbot.severity_emoji" . }}{{- else -}}✅{{- end -}}
+{{- end }}
+
+{{/* Short title for Slack/PD */}}
+{{ define "clawbot.title" -}}
+{{ template "clawbot.status_emoji" . }} [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+{{- if .CommonLabels.service }} — {{ .CommonLabels.service }}{{ end -}}
+{{- end }}
+
+{{/* Full description body */}}
+{{ define "clawbot.description" -}}
+*Summary:* {{ .CommonAnnotations.summary }}
+{{ if .CommonAnnotations.description }}*Details:* {{ .CommonAnnotations.description }}{{ end }}
+{{ if .CommonAnnotations.runbook }}*Runbook:* {{ .CommonAnnotations.runbook }}{{ end }}
+*Severity:* {{ .CommonLabels.severity | toUpper }}
+*Firing:* {{ .Alerts.Firing | len }} alert(s){{ if gt (.Alerts.Resolved | len) 0 }}, *Resolved:* {{ .Alerts.Resolved | len }}{{ end }}
+{{- end }}
+
+{{/* PagerDuty description (plain text) */}}
+{{ define "clawbot.pagerduty.description" -}}
+[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}
+Service: {{ .CommonLabels.service | default "unknown" }} | Severity: {{ .CommonLabels.severity }}
+{{ .CommonAnnotations.description }}
+{{- end }}

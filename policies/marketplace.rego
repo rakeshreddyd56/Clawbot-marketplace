@@ -4,8 +4,8 @@
 # Version:  v1
 #
 # Architecture: Deny-by-default RBAC
-# Roles:        admin | requester | worker | auditor  (4 roles)
-# Actions:      37 known actions (see known_actions set below)
+# Roles:        admin | requester | worker | moderator | auditor  (5 roles)
+# Actions:      44 known actions (see known_actions set below)
 #
 # Trust Tiers:
 #   A — high trust   (all actions available)
@@ -14,7 +14,7 @@
 #
 # Identity Freshness:
 #   Privileged ops (payout, escrow.*, vault.token.issue, sanction.*)
-#   require identity verified within the last 15 minutes.
+#   require identity verified within the last 60 minutes.
 # ─────────────────────────────────────────────────────────────────────────────
 package clawbot.marketplace
 
@@ -23,9 +23,9 @@ import rego.v1
 # ─── Default: deny everything ────────────────────────────────────────────────
 default allow := false
 
-# ─── Known Actions (37 total) ────────────────────────────────────────────────
+# ─── Known Actions (44 total) ────────────────────────────────────────────────
 known_actions := {
-  # Task lifecycle (11)
+  # Task lifecycle (13)
   "task.create",
   "task.post",
   "task.list",
@@ -37,6 +37,8 @@ known_actions := {
   "task.assign",
   "task.expire",
   "task.complete",
+  "task.accept",
+  "task.eligibility.read",
 
   # Contract + Milestone lifecycle (6)
   "contract.create",
@@ -46,15 +48,18 @@ known_actions := {
   "contract.milestone.accept",
   "contract.milestone.reject",
 
-  # Artifacts (3)
+  # Artifacts (4)
   "artifact.submit",
   "artifact.validate",
   "artifact.read",
+  "artifact.signature.preview",
 
-  # Disputes (3)
+  # Disputes (5)
   "dispute.open",
   "dispute.resolve",
   "dispute.appeal",
+  "dispute.read",
+  "dispute.evidence.read",
 
   # Wallet + Escrow (6)
   "wallet.topup",
@@ -69,12 +74,14 @@ known_actions := {
   "identity.refresh",
   "identity.trust_tier.update",
 
-  # Vault (2)
+  # Vault (3)
   "vault.token.issue",
+  "vault.token.create",
   "vault.data.read",
 
-  # Audit (1)
+  # Audit (2)
   "audit.log.read",
+  "audit.read",
 
   # Sanctions + Admin (2)
   "sanction.apply",
@@ -87,13 +94,14 @@ unknown_action if {
 }
 
 # ─── Helper: identity freshness check ────────────────────────────────────────
-# Privileged operations require a fresh identity token (< 15 minutes old).
+# Privileged operations require a fresh identity token (< 60 minutes old).
 privileged_actions := {
   "wallet.payout",
   "wallet.escrow.lock",
   "wallet.escrow.release",
   "wallet.escrow.slash",
   "vault.token.issue",
+  "vault.token.create",
   "sanction.apply",
   "sanction.lift",
   "identity.trust_tier.update",
@@ -101,7 +109,7 @@ privileged_actions := {
 
 identity_fresh if {
   # input.actor.identity_verified_at is a Unix timestamp
-  input.actor.identity_verified_at > (time.now_ns() / 1e9) - 900  # 15 min
+  input.actor.identity_verified_at > (time.now_ns() / 1e9) - 3600  # 60 min
 }
 
 # For privileged actions, identity must be fresh
@@ -119,6 +127,7 @@ tier_c_blocked_actions := {
   "wallet.escrow.release",
   "wallet.escrow.slash",
   "vault.token.issue",
+  "vault.token.create",
 }
 
 tier_c_blocked if {
@@ -149,12 +158,15 @@ requester_actions := {
   "task.list",
   "task.search",
   "task.cancel",
+  "task.accept",
   "task.scope.read",
   "contract.view",
   "contract.milestone.accept",
   "contract.milestone.reject",
   "artifact.read",
   "dispute.open",
+  "dispute.read",
+  "dispute.evidence.read",
   "dispute.appeal",
   "wallet.topup",
   "wallet.payout",
@@ -162,6 +174,7 @@ requester_actions := {
   "identity.verify",
   "identity.refresh",
   "audit.log.read",
+  "audit.read",
 }
 
 allow if {
@@ -184,6 +197,7 @@ worker_actions := {
   "task.list",
   "task.search",
   "task.reserve",
+  "task.eligibility.read",
   "task.scope.read",
   "task.heartbeat",
   "task.complete",
@@ -191,14 +205,19 @@ worker_actions := {
   "contract.milestone.deliver",
   "artifact.submit",
   "artifact.read",
+  "artifact.signature.preview",
   "dispute.open",
+  "dispute.read",
+  "dispute.evidence.read",
   "dispute.appeal",
   "wallet.payout",
   "wallet.balance.read",
   "identity.verify",
   "identity.refresh",
   "vault.token.issue",
+  "vault.token.create",
   "vault.data.read",
+  "audit.read",
 }
 
 allow if {
@@ -223,14 +242,86 @@ allow if {
   privileged_action_allowed
 }
 
+allow if {
+  input.actor.role == "worker"
+  input.action == "vault.token.create"
+  not tier_c_blocked
+  privileged_action_allowed
+}
+
+# ─── MODERATOR role (dispute resolution, sanctions, oversight) ────────────────
+# Moderators can resolve disputes, apply/lift sanctions, manage trust tiers,
+# and have broad read access for oversight. They CANNOT create/reserve tasks,
+# top up wallets, request payouts, or perform escrow financial operations.
+moderator_actions := {
+  # Task oversight (read + administrative)
+  "task.list",
+  "task.search",
+  "task.scope.read",
+  "task.cancel",
+  "task.assign",
+  "task.expire",
+  "task.accept",
+  "task.eligibility.read",
+  # Contract oversight
+  "contract.view",
+  "contract.terminate",
+  "contract.milestone.accept",
+  "contract.milestone.reject",
+  # Artifact oversight
+  "artifact.read",
+  "artifact.validate",
+  "artifact.signature.preview",
+  # Disputes — full access (core moderator duty)
+  "dispute.open",
+  "dispute.resolve",
+  "dispute.appeal",
+  "dispute.read",
+  "dispute.evidence.read",
+  # Wallet — read-only balance for investigations
+  "wallet.balance.read",
+  # Identity — self-service + trust tier management
+  "identity.verify",
+  "identity.refresh",
+  "identity.trust_tier.update",
+  # Sanctions — core moderator duty (privileged)
+  "sanction.apply",
+  "sanction.lift",
+  # Audit — oversight access
+  "audit.log.read",
+  "audit.read",
+}
+
+# Moderator — non-privileged actions
+allow if {
+  not unknown_action
+  not tier_c_blocked
+  input.actor.role == "moderator"
+  input.action in moderator_actions
+  not input.action in privileged_actions
+}
+
+# Moderator — privileged actions (sanction.apply, sanction.lift, identity.trust_tier.update)
+allow if {
+  not unknown_action
+  input.actor.role == "moderator"
+  input.action in moderator_actions
+  input.action in privileged_actions
+  privileged_action_allowed
+}
+
 # ─── AUDITOR role (read-only) ─────────────────────────────────────────────────
 auditor_actions := {
   "task.list",
   "task.search",
+  "task.eligibility.read",
   "contract.view",
   "artifact.read",
+  "dispute.read",
+  "dispute.evidence.read",
   "wallet.balance.read",
   "audit.log.read",
+  "audit.read",
 }
 
 allow if {
@@ -240,6 +331,8 @@ allow if {
 
 # ─── Deny reasons (for structured error responses) ───────────────────────────
 # The API layer may call: data.clawbot.marketplace.deny_reason
+default deny_reason := "none"
+
 deny_reason := "unknown_action" if {
   unknown_action
 }

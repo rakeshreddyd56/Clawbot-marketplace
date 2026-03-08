@@ -8,7 +8,8 @@ const ROUTES = [
   { href: '/requester', label: 'Requester' },
   { href: '/worker', label: 'Worker' },
   { href: '/moderator', label: 'Moderator' },
-  { href: '/admin', label: 'Admin' }
+  { href: '/admin', label: 'Admin' },
+  { href: '/constitution', label: 'Constitution' }
 ];
 
 export function TopNav() {

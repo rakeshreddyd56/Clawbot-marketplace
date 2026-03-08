@@ -1,0 +1,66 @@
+{
+  "nav": {
+    "onboarding": "ऑनबोर्डिंग",
+    "requester": "अनुरोधकर्ता",
+    "worker": "कार्यकर्ता",
+    "moderator": "मॉडरेटर",
+    "admin": "प्रशासक",
+    "models": "मॉडल",
+    "home": "होम"
+  },
+  "catalog": {
+    "title": "AI मॉडल कैटलॉग",
+    "subtitle": "AI मॉडल खोजें — भारतीय मूल, भाषा समर्थन और क्षमताओं के अनुसार फ़िल्टर करें।",
+    "searchPlaceholder": "मॉडल नाम, संगठन या कीवर्ड से खोजें\u2026",
+    "filterOrigin": "मूल",
+    "filterCapability": "क्षमता",
+    "filterLanguage": "भाषा",
+    "indianOriginOnly": "केवल भारतीय मूल",
+    "sortBy": "क्रमबद्ध करें",
+    "sortRelevance": "प्रासंगिकता",
+    "sortRecent": "सबसे हाल का",
+    "sortPopular": "सबसे लोकप्रिय",
+    "results": "मॉडल परिणाम",
+    "modelList": "मॉडल सूची",
+    "showingCount": "{total} में से {shown} मॉडल दिखाए जा रहे हैं",
+    "tryClearingFilters": "अपनी खोज को व्यापक बनाएँ या फ़िल्टर साफ़ करें।",
+    "filters": "मॉडल फ़िल्टर",
+    "filtersTitle": "फ़िल्टर",
+    "clearAll": "सभी साफ़ करें",
+    "allCapabilities": "सभी क्षमताएँ",
+    "allLanguages": "सभी भाषाएँ"
+  },
+  "modelCard": {
+    "capabilities": "क्षमताएँ",
+    "languages": "भाषाएँ",
+    "indianLanguages": "भारतीय भाषाएँ",
+    "origin": "मूल",
+    "provider": "प्रदाता",
+    "license": "लाइसेंस",
+    "parameters": "पैरामीटर",
+    "viewDetails": "विवरण देखें"
+  },
+  "modelDetail": {
+    "description": "विवरण",
+    "useCases": "उपयोग के मामले",
+    "reviews": "समीक्षाएँ",
+    "rateThisModel": "इस मॉडल को रेट करें",
+    "submitRating": "रेटिंग जमा करें",
+    "writeReview": "समीक्षा लिखें...",
+    "externalLinks": "बाहरी लिंक",
+    "huggingFace": "हगिंगफ़ेस",
+    "github": "गिटहब",
+    "paper": "पेपर"
+  },
+  "common": {
+    "loadMore": "और लोड करें",
+    "noResults": "कोई परिणाम नहीं मिला",
+    "ratingCount": "{count} रेटिंग",
+    "loading": "लोड हो रहा है...",
+    "error": "कुछ गलत हो गया",
+    "retry": "पुनः प्रयास करें",
+    "cancel": "रद्द करें",
+    "save": "सहेजें",
+    "search": "खोजें"
+  }
+}

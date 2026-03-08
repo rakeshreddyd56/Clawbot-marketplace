@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Clawbot Marketplace — Kubernetes Ingress
+# IngressClass: nginx  (AWS EKS with ingress-nginx controller)
+#
+# Traffic routing:
+#   /          → web-console  (Next.js, port 3001)
+#   /api/bff/* → web-console  (BFF proxy, handled internally by Next.js)
+#
+# TLS:
+#   - cert-manager ClusterIssuer: letsencrypt-prod
+#   - TLS secret: clawbot-tls (created by cert-manager)
+#
+# Security headers:
+#   - HSTS, X-Frame-Options, X-Content-Type-Options, CSP via annotations
+#
+# WebSocket:
+#   - nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+#     (long-poll WebSocket connections for /v1/events/ws)
+#
+# NOTE: Replace app.clawbot.io with your actual domain before deploying.
+# ─────────────────────────────────────────────────────────────────────────────
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clawbot-marketplace
+  namespace: clawbot-marketplace
+  labels:
+    app.kubernetes.io/name: clawbot-marketplace
+    app.kubernetes.io/part-of: clawbot-marketplace
+    app.kubernetes.io/component: ingress
+  annotations:
+    # IngressClass
+    kubernetes.io/ingress.class: nginx
+
+    # TLS — cert-manager auto-provisions a Let's Encrypt certificate
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+
+    # Proxy timeouts — required for WebSocket connections (/v1/events/ws)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "15"
+
+    # Enable WebSocket upgrade (proxy_set_header Upgrade + Connection)
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+
+    # Security headers (Content Security Policy, HSTS, etc.)
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+
+    # Body size limit (default 1m is too small for artifact uploads)
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+
+    # Rate limiting (back-stop at ingress level — API also rate-limits)
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/limit-rps: "30"
+
+    # Enable CORS at the ingress level (API also enforces CORS_ORIGINS)
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    # cors-allow-origin is intentionally not set here — API enforces allowlist
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - app.clawbot.io   # REPLACE with your domain
+      secretName: clawbot-tls
+  rules:
+    - host: app.clawbot.io  # REPLACE with your domain
+      http:
+        paths:
+          # All traffic → web-console (Next.js serves the app + /api/bff/* proxy)
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-console
+                port:
+                  name: http

@@ -3,9 +3,21 @@ import { nowIso, sha256, uid } from '@claw/utils';
 import type { AuthContext, Store } from '../types/domain.js';
 import { DomainError } from './errors.js';
 
+// GAP-CRIT-002: Shared freshness window constant — MUST match OPA marketplace.rego identity_fresh rule.
+// OPA uses: identity_verified_at > (time.now_ns() / 1e9) - 3600
+// Configurable via MOLTBOOK_EXPIRY_WINDOW_MIN env var (default: 60 minutes).
+export const IDENTITY_FRESHNESS_WINDOW_SEC = (() => {
+  const min = parseInt(process.env.MOLTBOOK_EXPIRY_WINDOW_MIN ?? '', 10);
+  return (isNaN(min) ? 60 : min) * 60;
+})();
+
 export type PolicyEvalInput = {
   action: string;
   actor: AuthContext;
+  /** Unix timestamp (seconds) of last identity verification. Required for privileged action checks. */
+  identityVerifiedAt?: number;
+  /** Agent trust tier. Required for tier C restriction checks. */
+  trustTier?: 'A' | 'B' | 'C';
   context?: Record<string, unknown>;
 };
 
@@ -43,6 +55,30 @@ const KNOWN_ACTIONS = new Set([
   'audit.read'
 ]);
 
+// GAP-CRIT-002: Privileged actions that require fresh identity (must match OPA privileged_actions)
+const PRIVILEGED_ACTIONS = new Set([
+  'wallet.payout',
+  'wallet.escrow.lock',
+  'wallet.escrow.release',
+  'wallet.escrow.slash',
+  'vault.token.issue',
+  'vault.token.create',
+  'sanction.apply',
+  'sanction.lift',
+  'identity.trust_tier.update',
+]);
+
+// GAP-CRIT-002: Trust Tier C blocked actions (must match OPA tier_c_blocked_actions)
+const TIER_C_BLOCKED_ACTIONS = new Set([
+  'task.reserve',
+  'wallet.payout',
+  'wallet.escrow.lock',
+  'wallet.escrow.release',
+  'wallet.escrow.slash',
+  'vault.token.issue',
+  'vault.token.create',
+]);
+
 const CONTEXT_ALLOWLIST: Record<string, string[]> = {
   'task.accept': ['taskId', 'leaseId'],
   'task.eligibility.read': ['taskId'],
@@ -73,6 +109,23 @@ export class PolicyDecisionService {
     const hasUnknownFields = contextKeys.some((key) => !allowlist.includes(key));
     if (hasUnknownFields) {
       return this.record(input, false, 'UNKNOWN_CONTEXT_FIELD');
+    }
+
+    // GAP-CRIT-002: Trust Tier C restriction (matches OPA tier_c_blocked)
+    if (input.trustTier === 'C' && TIER_C_BLOCKED_ACTIONS.has(input.action)) {
+      return this.record(input, false, 'TIER_C_RESTRICTED');
+    }
+
+    // GAP-CRIT-002: Identity freshness check for privileged actions (matches OPA identity_fresh)
+    // Uses the same 60-minute window as OPA's marketplace.rego
+    if (PRIVILEGED_ACTIONS.has(input.action)) {
+      if (input.identityVerifiedAt == null) {
+        return this.record(input, false, 'IDENTITY_NOT_FRESH');
+      }
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (input.identityVerifiedAt <= nowSec - IDENTITY_FRESHNESS_WINDOW_SEC) {
+        return this.record(input, false, 'IDENTITY_NOT_FRESH');
+      }
     }
 
     const allow = this.allowByRole(input.action, input.actor.role);

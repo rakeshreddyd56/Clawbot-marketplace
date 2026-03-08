@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Auto-relay runner script for coder agent — task clawbot-marketplace-md-TASK-HARD-001
+# Auto-relay runner script for coder agent — task TASK-HARD-003
 # Project: Clawbot-marketplace
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,7 +21,7 @@ try:
 except: reg = {'agents': []}
 if not isinstance(reg.get('agents'), list): reg['agents'] = []
 agents = [a for a in reg['agents'] if a.get('name') != 'coder']
-agents.append({'name': 'coder', 'role': 'coder', 'status': 'working', 'current_task': 'clawbot-marketplace-md-TASK-HARD-001', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
+agents.append({'name': 'coder', 'role': 'coder', 'status': 'working', 'current_task': 'TASK-HARD-003', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
 reg['agents'] = agents
 with open(reg_path, 'w') as f: json.dump(reg, f, indent=2)
 " 2>/dev/null || true
@@ -32,4 +32,4 @@ SYSTEM_PROMPT="$(cat .claude/agents/coder.md)"
 exec claude \
   --system-prompt "$SYSTEM_PROMPT" \
   --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
-  -p "Work on task clawbot-marketplace-md-TASK-HARD-001: Replace fake Moltbook adapter with real OAuth client. Read .claude/coordination/TASKS.md for details. Update task status as you progress."
+  -p "Work on task TASK-HARD-003: Add PostgreSQL persistence layer. Read .claude/coordination/TASKS.md for details. Update task status as you progress."

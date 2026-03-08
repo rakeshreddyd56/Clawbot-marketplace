@@ -9,6 +9,7 @@ coverage
 
 # Claude Code Multi-Agent Coordination (DO NOT COMMIT)
 .claude/coordination/
+.claude/worktrees/
 .agent-workspace/
 progress.txt
 reviews/

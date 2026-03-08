@@ -619,3 +619,347 @@ button:not(:disabled):active {
   pointer-events: none;
   user-select: none;
 }
+
+/* ─── Constitution viewer ─────────────────────────────────────────────────── */
+
+.constitution-header {
+  border-left: 4px solid var(--accent);
+}
+
+.constitution-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.constitution-search {
+  max-width: 400px;
+}
+
+.constitution-filters {
+  flex-wrap: wrap;
+}
+
+.constitution-rule {
+  padding: 0;
+  overflow: hidden;
+}
+
+.constitution-rule-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 15px;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.constitution-rule-header:hover {
+  background: rgba(20, 107, 78, 0.04);
+  filter: none;
+}
+
+.constitution-rule-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.constitution-rule-title-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.constitution-rule-title {
+  font-weight: 650;
+  font-size: 15px;
+}
+
+.constitution-rule-chevron {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+}
+
+.constitution-rule-body {
+  padding: 0 14px 14px 58px;
+  animation: card-in 0.15s ease both;
+}
+
+.constitution-mandate {
+  margin: 0 0 10px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: rgba(20, 107, 78, 0.04);
+  border-radius: 0 8px 8px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.constitution-details {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.constitution-details li {
+  margin-bottom: 4px;
+}
+
+.constitution-details li:last-child {
+  margin-bottom: 0;
+}
+
+.constitution-steps {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.constitution-steps li {
+  margin-bottom: 6px;
+  padding-left: 4px;
+}
+
+.constitution-steps li::marker {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.constitution-prompt-block {
+  background: #0e1f19;
+  color: #c8e6d0;
+  border-radius: 10px;
+  padding: 16px;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.constitution-tier-header {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.constitution-tier-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 22px;
+}
+
+.constitution-tier-badge.tier-ok {
+  background: var(--pill-ok-bg);
+  color: var(--pill-ok);
+  border: 2px solid rgba(13, 122, 74, 0.3);
+}
+
+.constitution-tier-badge.tier-warn {
+  background: var(--pill-warn-bg);
+  color: var(--pill-warn);
+  border: 2px solid rgba(141, 90, 15, 0.3);
+}
+
+.constitution-tier-badge.tier-bad {
+  background: var(--pill-bad-bg);
+  color: var(--pill-bad);
+  border: 2px solid rgba(164, 49, 47, 0.3);
+}
+
+.constitution-prohibited-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.constitution-prohibited-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* ── Constitution responsive ──────────────────────────────────── */
+@media (max-width: 600px) {
+  .constitution-rule-body {
+    padding-left: 14px;
+  }
+
+  .constitution-rule-header {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .constitution-rule-number {
+    width: 28px;
+    height: 28px;
+    font-size: 12px;
+  }
+
+  .constitution-prohibited-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .constitution-tier-header {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .constitution-prompt-block {
+    font-size: 11px;
+    padding: 12px;
+  }
+}
+
+/* ─── Dispute deadline timer ───────────────────────────────────────────────── */
+
+@keyframes deadline-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.deadline-timer {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+  text-align: center;
+}
+
+.deadline-timer-header {
+  margin-bottom: 8px;
+}
+
+.deadline-timer-countdown {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+
+.deadline-timer-label {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.deadline-safe .deadline-timer-countdown {
+  color: var(--pill-ok);
+}
+
+.deadline-warning .deadline-timer-countdown {
+  color: var(--pill-warn);
+}
+
+.deadline-critical .deadline-timer-countdown {
+  color: var(--pill-bad);
+  animation: deadline-pulse 1.5s ease-in-out infinite;
+}
+
+.deadline-expired .deadline-timer-countdown {
+  color: var(--pill-bad);
+}
+
+.deadline-expired {
+  border-color: rgba(164, 49, 47, 0.3);
+  background: var(--pill-bad-bg);
+}
+
+.deadline-responded .deadline-timer-countdown {
+  color: var(--pill-ok);
+}
+
+.deadline-responded {
+  border-color: rgba(13, 122, 74, 0.25);
+  background: var(--pill-ok-bg);
+}
+
+.deadline-responded-icon::before {
+  content: "\2713";
+  margin-right: 2px;
+}
+
+.deadline-pill {
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.deadline-clock-icon::before {
+  content: "\23F1";
+  margin-right: 2px;
+}
+
+.deadline-expired-icon {
+  font-weight: 800;
+  margin-right: 2px;
+}
+
+/* Queue item urgency borders */
+.list-button.urgency-warning {
+  border-left: 3px solid var(--pill-warn);
+}
+
+.list-button.urgency-critical {
+  border-left: 3px solid var(--pill-bad);
+  background: rgba(164, 49, 47, 0.03);
+}
+
+.list-button.urgency-expired {
+  border-left: 3px solid var(--pill-bad);
+  background: var(--pill-bad-bg);
+  opacity: 0.7;
+}
+
+/* Sweep results section */
+.sweep-results {
+  margin-top: 10px;
+}
+
+.sweep-results .readiness-row {
+  border-left: 3px solid var(--pill-warn);
+}
+
+/* ─── Dispute deadline responsive ──────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .deadline-timer-countdown {
+    font-size: 22px;
+  }
+}

@@ -1,0 +1,72 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Prometheus — Local Development Configuration
+#
+# Scrapes:
+#   - otel-collector  :8889  — Clawbot application metrics (exported by OTel)
+#   - otel-collector  :8888  — OTel Collector self-metrics
+#   - alertmanager    :9093  — Alertmanager self-metrics
+#   - prometheus      :9090  — Prometheus self-metrics
+#
+# Alert routing: Prometheus → Alertmanager → PagerDuty / Slack
+#   alertmanager config: infra/alertmanager/alertmanager.yml
+#   alertmanager UI:     http://localhost:9093
+#
+# Retention: 15 days (local dev — reduce if disk is scarce)
+# ─────────────────────────────────────────────────────────────────────────────
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: local
+    service_namespace: clawbot-marketplace
+
+# ── Rule Files ────────────────────────────────────────────────────────────────
+# Load PrometheusRule-equivalent alert rules for local dev.
+# In K8s these are loaded by the Prometheus Operator from PrometheusRule CRDs.
+# For local docker-compose, mount them as plain YAML rule files.
+rule_files:
+  - "/etc/prometheus/rules/*.yml"
+
+# ── Alerting ──────────────────────────────────────────────────────────────────
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093   # Alertmanager in docker-compose network
+      scheme: http
+      timeout: 10s
+      api_version: v2
+
+# ── Scrape Configs ────────────────────────────────────────────────────────────
+scrape_configs:
+  # ── Clawbot application metrics (via OTel Prometheus exporter) ──────────────
+  - job_name: clawbot-otel-exporter
+    static_configs:
+      - targets:
+          - otel-collector:8889
+        labels:
+          service_namespace: clawbot-marketplace
+    metrics_path: /metrics
+    honor_labels: true
+
+  # ── OTel Collector self-metrics ──────────────────────────────────────────────
+  - job_name: otel-collector
+    static_configs:
+      - targets:
+          - otel-collector:8888
+        labels:
+          component: otel-collector
+
+  # ── Alertmanager self-metrics ─────────────────────────────────────────────────
+  - job_name: alertmanager
+    static_configs:
+      - targets:
+          - alertmanager:9093
+        labels:
+          component: alertmanager
+
+  # ── Prometheus self-metrics ───────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

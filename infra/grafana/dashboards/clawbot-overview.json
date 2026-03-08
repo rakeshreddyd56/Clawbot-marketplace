@@ -1,0 +1,415 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"},
+    {"type": "panel", "id": "timeseries", "name": "Time series", "version": ""},
+    {"type": "panel", "id": "stat", "name": "Stat", "version": ""},
+    {"type": "panel", "id": "gauge", "name": "Gauge", "version": ""}
+  ],
+  "annotations": {"list": []},
+  "description": "Clawbot Marketplace — Real-time operational metrics",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "title": "API Gateway",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10},
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 1},
+      "id": 2,
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "legend": {"displayMode": "list", "placement": "bottom"}
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(clawbot_http_server_duration_milliseconds_count{job=\"clawbot-otel-exporter\"}[2m]))",
+          "legendFormat": "Request Rate (rps)",
+          "refId": "A"
+        }
+      ],
+      "title": "Request Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 0.01},
+              {"color": "red", "value": 0.05}
+            ]
+          },
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 1},
+      "id": 3,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "expr": "sum(rate(clawbot_http_server_duration_milliseconds_count{job=\"clawbot-otel-exporter\",http_status_code=~\"5..\"}[5m])) / sum(rate(clawbot_http_server_duration_milliseconds_count{job=\"clawbot-otel-exporter\"}[5m]))",
+          "legendFormat": "Error Rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate (5xx)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 5},
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 1},
+      "id": 4,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(clawbot_http_server_duration_milliseconds_bucket{job=\"clawbot-otel-exporter\"}[2m])) by (le))",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(clawbot_http_server_duration_milliseconds_bucket{job=\"clawbot-otel-exporter\"}[2m])) by (le))",
+          "legendFormat": "p95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(clawbot_http_server_duration_milliseconds_bucket{job=\"clawbot-otel-exporter\"}[2m])) by (le))",
+          "legendFormat": "p99",
+          "refId": "C"
+        }
+      ],
+      "title": "Request Latency (p50/p95/p99)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "id": 10,
+      "title": "Escrow & Marketplace",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+      "id": 11,
+      "targets": [
+        {
+          "expr": "sum(increase(clawbot_escrow_operations_total{job=\"clawbot-otel-exporter\",operation=\"lock\"}[5m]))",
+          "legendFormat": "Escrow Locks",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(clawbot_escrow_operations_total{job=\"clawbot-otel-exporter\",operation=\"release\"}[5m]))",
+          "legendFormat": "Escrow Releases",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(clawbot_escrow_operations_total{job=\"clawbot-otel-exporter\",operation=\"slash\"}[5m]))",
+          "legendFormat": "Escrow Slashes",
+          "refId": "C"
+        }
+      ],
+      "title": "Escrow Operations (5m window)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 10},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+      "id": 12,
+      "targets": [
+        {
+          "expr": "sum(increase(clawbot_task_lifecycle_total{job=\"clawbot-otel-exporter\",event=\"posted\"}[5m]))",
+          "legendFormat": "Tasks Posted",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(clawbot_task_lifecycle_total{job=\"clawbot-otel-exporter\",event=\"assigned\"}[5m]))",
+          "legendFormat": "Tasks Assigned",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(clawbot_task_lifecycle_total{job=\"clawbot-otel-exporter\",event=\"completed\"}[5m]))",
+          "legendFormat": "Tasks Completed",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(increase(clawbot_task_lifecycle_total{job=\"clawbot-otel-exporter\",event=\"expired\"}[5m]))",
+          "legendFormat": "Tasks Expired",
+          "refId": "D"
+        }
+      ],
+      "title": "Task Lifecycle Events (5m window)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "id": 20,
+      "title": "Identity & Policy",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 5},
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 19},
+      "id": 21,
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(clawbot_identity_verification_duration_milliseconds_bucket{job=\"clawbot-otel-exporter\"}[5m])) by (le))",
+          "legendFormat": "p95 Moltbook verify latency",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(clawbot_identity_verification_duration_milliseconds_bucket{job=\"clawbot-otel-exporter\"}[5m])) by (le))",
+          "legendFormat": "p99 Moltbook verify latency",
+          "refId": "B"
+        }
+      ],
+      "title": "Identity Verification Latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 19},
+      "id": 22,
+      "targets": [
+        {
+          "expr": "sum(increase(clawbot_policy_decisions_total{job=\"clawbot-otel-exporter\",decision=\"allow\"}[5m]))",
+          "legendFormat": "Allowed",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(clawbot_policy_decisions_total{job=\"clawbot-otel-exporter\",decision=\"deny\"}[5m]))",
+          "legendFormat": "Denied",
+          "refId": "B"
+        }
+      ],
+      "title": "Policy Decisions (5m window)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 200}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 19},
+      "id": 23,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "expr": "sum(clawbot_websocket_connections_active{job=\"clawbot-otel-exporter\"})",
+          "legendFormat": "Active WebSocket Connections",
+          "refId": "A"
+        }
+      ],
+      "title": "Active WebSocket Connections",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "id": 30,
+      "title": "Audit & Disputes",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 5},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+      "id": 31,
+      "targets": [
+        {
+          "expr": "sum(increase(clawbot_audit_events_total{job=\"clawbot-otel-exporter\"}[5m]))",
+          "legendFormat": "Audit Events",
+          "refId": "A"
+        }
+      ],
+      "title": "Audit Events Published (5m window)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+      "id": 32,
+      "targets": [
+        {
+          "expr": "sum(increase(clawbot_dispute_resolutions_total{job=\"clawbot-otel-exporter\"}[1h]))",
+          "legendFormat": "Disputes Resolved (1h)",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(clawbot_lease_expiry_total{job=\"clawbot-otel-exporter\"}[5m]))",
+          "legendFormat": "Lease Expirations (5m)",
+          "refId": "B"
+        }
+      ],
+      "title": "Disputes & Lease Events",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36},
+      "id": 40,
+      "title": "Infrastructure",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"lineWidth": 2, "fillOpacity": 5},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 37},
+      "id": 41,
+      "targets": [
+        {
+          "expr": "otelcol_processor_batch_batch_send_size_sum{job=\"otel-collector\"} / otelcol_processor_batch_batch_send_size_count{job=\"otel-collector\"}",
+          "legendFormat": "Avg Batch Size",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(otelcol_receiver_accepted_spans_total{job=\"otel-collector\"}[2m])",
+          "legendFormat": "Spans/sec received",
+          "refId": "B"
+        }
+      ],
+      "title": "OTel Collector Throughput",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "${datasource}"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 200},
+              {"color": "red", "value": 400}
+            ]
+          },
+          "unit": "decmbytes"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 37},
+      "id": 42,
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}},
+      "targets": [
+        {
+          "expr": "otelcol_process_memory_rss{job=\"otel-collector\"} / 1024 / 1024",
+          "legendFormat": "OTel Collector RSS (MiB)",
+          "refId": "A"
+        }
+      ],
+      "title": "OTel Collector Memory",
+      "type": "gauge"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["clawbot", "marketplace", "sre"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "prometheus"},
+        "hide": 0,
+        "includeAll": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Clawbot Marketplace — Overview",
+  "uid": "clawbot-overview-v1",
+  "version": 1
+}

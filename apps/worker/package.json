@@ -1,0 +1,27 @@
+{
+  "name": "@claw/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "lint": "echo \"no lint\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@claw/contracts": "0.1.0",
+    "@claw/workflows": "0.1.0",
+    "@claw/utils": "0.1.0",
+    "@temporalio/worker": "latest",
+    "@temporalio/workflow": "latest",
+    "@temporalio/activity": "latest",
+    "@temporalio/common": "latest"
+  },
+  "devDependencies": {
+    "@temporalio/testing": "latest",
+    "vitest": "^2.1.8"
+  }
+}

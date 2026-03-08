@@ -1,0 +1,18 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Grafana — Dashboard Provisioning
+# Loads all dashboards from /var/lib/grafana/dashboards/
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: 1
+
+providers:
+  - name: Clawbot Marketplace
+    orgId: 1
+    folder: Clawbot
+    folderUid: clawbot
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
