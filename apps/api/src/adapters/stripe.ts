@@ -14,7 +14,7 @@ export interface StripeWebhookEvent {
  * Resolves an agentId to a Stripe connected account ID.
  * Used in production for Stripe Connect payouts.
  */
-export type ConnectedAccountResolver = (agentId: string) => Promise<string | null>;
+export type ConnectedAccountResolver = (agentId: string) => Promise<string | null | undefined>;
 
 export interface StripeAdapter {
   createTopup(agentId: string, amount: number): Promise<{ topupId: string; status: 'succeeded' }>;
@@ -33,6 +33,12 @@ export interface StripeAdapter {
 // ── Stripe signature verification constants ──────────────────────────────────
 const STRIPE_SIGNATURE_SCHEME = 'v1';
 const DEFAULT_TOLERANCE_SECONDS = 300; // 5 minutes
+
+/** Stripe API version pinned for consistency. */
+const STRIPE_API_VERSION = '2024-12-18.acacia';
+
+/** Default Stripe API base URL. */
+const DEFAULT_STRIPE_API_BASE = 'https://api.stripe.com';
 
 /** Maximum allowed webhook body size in bytes (64 KB). Prevents hash-DoS. */
 export const WEBHOOK_MAX_BODY_BYTES = 65_536;
@@ -120,38 +126,139 @@ export class FakeStripeAdapter implements StripeAdapter {
   }
 }
 
+// ── StripeApiError ───────────────────────────────────────────────────────────
+
+/**
+ * Error type for Stripe API failures (4xx/5xx responses).
+ * Includes the HTTP status code mapped to our domain:
+ * - Stripe 4xx → statusCode 400 (client error in our domain)
+ * - Stripe 5xx → statusCode 502 (bad gateway — upstream failure)
+ */
+export class StripeApiError extends Error {
+  public readonly statusCode: number;
+  public readonly stripeCode?: string;
+  public readonly stripeType?: string;
+
+  constructor(message: string, statusCode: number, stripeCode?: string, stripeType?: string) {
+    super(message);
+    this.name = 'StripeApiError';
+    this.statusCode = statusCode;
+    this.stripeCode = stripeCode;
+    this.stripeType = stripeType;
+  }
+}
+
 // ── HttpStripeAdapter (production mode) ──────────────────────────────────────
 
 export interface HttpStripeAdapterConfig {
   apiKey: string;
   webhookSecret: string;
   connectedAccountResolver?: ConnectedAccountResolver;
+  /** Override Stripe API base URL (useful for testing against mock servers). */
+  apiBaseUrl?: string;
+  /** Maximum number of retries on transient failures (5xx, 429). Default: 2 */
+  maxRetries?: number;
+  /** Base delay in ms for exponential backoff. Default: 250 */
+  baseDelayMs?: number;
+  /** Currency for payments. Default: 'usd' */
+  currency?: string;
 }
 
 export class HttpStripeAdapter implements StripeAdapter {
   private readonly apiKey: string;
   private readonly webhookSecret: string;
   private readonly connectedAccountResolver?: ConnectedAccountResolver;
+  private readonly apiBaseUrl: string;
+  private readonly maxRetries: number;
+  private readonly baseDelayMs: number;
+  private readonly currency: string;
 
   constructor(config: HttpStripeAdapterConfig) {
     this.apiKey = config.apiKey;
     this.webhookSecret = config.webhookSecret;
     this.connectedAccountResolver = config.connectedAccountResolver;
+    // Strip trailing slashes from base URL
+    this.apiBaseUrl = (config.apiBaseUrl ?? DEFAULT_STRIPE_API_BASE).replace(/\/+$/, '');
+    this.maxRetries = config.maxRetries ?? 2;
+    this.baseDelayMs = config.baseDelayMs ?? 250;
+    this.currency = config.currency ?? 'usd';
   }
 
+  /**
+   * Creates a PaymentIntent on Stripe for wallet top-up.
+   * Amount is converted from dollars to cents. Auto-confirms the PaymentIntent.
+   */
   async createTopup(agentId: string, amount: number): Promise<{ topupId: string; status: 'succeeded' }> {
-    // Production: call Stripe API to create a PaymentIntent
-    // For now, this is a stub that would use this.apiKey
-    void this.apiKey;
-    return { topupId: `topup_${agentId}_${amount}`, status: 'succeeded' };
+    const amountCents = Math.round(amount * 100);
+    const idempotencyKey = `stripe_idem_${crypto.randomUUID()}`;
+
+    const params = new URLSearchParams();
+    params.set('amount', String(amountCents));
+    params.set('currency', this.currency);
+    params.set('confirm', 'true');
+    params.set('metadata[agent_id]', agentId);
+    params.set('metadata[purpose]', 'wallet_topup');
+
+    const response = await this.stripeRequest(
+      'POST',
+      '/v1/payment_intents',
+      params.toString(),
+      { idempotencyKey }
+    );
+
+    const status = response.status as string;
+    if (status !== 'succeeded') {
+      throw new StripeApiError(
+        `PaymentIntent status is '${status}', expected 'succeeded'. PaymentIntent may require additional action (${status}).`,
+        400,
+        status
+      );
+    }
+
+    return {
+      topupId: response.id as string,
+      status: 'succeeded'
+    };
   }
 
+  /**
+   * Creates a Payout on Stripe Connect for agent withdrawal.
+   * Amount is converted from dollars to cents.
+   * If a connectedAccountResolver is configured, includes the Stripe-Account header.
+   */
   async createPayout(agentId: string, amount: number): Promise<{ payoutId: string; status: 'pending' | 'paid' }> {
-    // Production: call Stripe Connect API for payout to connected account
-    const _connectedAccountId = this.connectedAccountResolver
+    const amountCents = Math.round(amount * 100);
+    const idempotencyKey = `stripe_idem_${crypto.randomUUID()}`;
+
+    // Resolve connected account for Stripe Connect
+    const connectedAccountId = this.connectedAccountResolver
       ? await this.connectedAccountResolver(agentId)
-      : null;
-    return { payoutId: `payout_${agentId}_${amount}`, status: 'pending' };
+      : undefined;
+
+    const params = new URLSearchParams();
+    params.set('amount', String(amountCents));
+    params.set('currency', this.currency);
+    params.set('metadata[agent_id]', agentId);
+    params.set('metadata[purpose]', 'agent_payout');
+
+    const response = await this.stripeRequest(
+      'POST',
+      '/v1/payouts',
+      params.toString(),
+      {
+        idempotencyKey,
+        stripeAccount: connectedAccountId ?? undefined
+      }
+    );
+
+    // Map Stripe payout statuses to our domain
+    const stripeStatus = response.status as string;
+    const mappedStatus: 'pending' | 'paid' = stripeStatus === 'paid' ? 'paid' : 'pending';
+
+    return {
+      payoutId: response.id as string,
+      status: mappedStatus
+    };
   }
 
   verifyWebhookSignature(rawBody: Buffer | string, signatureHeader: string): StripeWebhookEvent {
@@ -160,6 +267,116 @@ export class HttpStripeAdapter implements StripeAdapter {
       signatureHeader,
       this.webhookSecret
     );
+  }
+
+  // ── Private HTTP client ──────────────────────────────────────────────────
+
+  /**
+   * Makes an HTTP request to Stripe API with retry logic.
+   * Retries on 5xx and 429 (rate limit) with exponential backoff.
+   * Uses the same idempotency key across retries for safety.
+   */
+  private async stripeRequest(
+    method: string,
+    path: string,
+    body: string,
+    options: { idempotencyKey: string; stripeAccount?: string }
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.apiBaseUrl}${path}`;
+
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${this.apiKey}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Stripe-Version': STRIPE_API_VERSION,
+      'Idempotency-Key': options.idempotencyKey
+    };
+
+    if (options.stripeAccount) {
+      headers['Stripe-Account'] = options.stripeAccount;
+    }
+
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (attempt > 0) {
+        // Exponential backoff: baseDelay * 2^(attempt-1)
+        const delay = this.baseDelayMs * Math.pow(2, attempt - 1);
+        await sleep(delay);
+      }
+
+      try {
+        const response = await fetch(url, {
+          method,
+          headers,
+          body
+        });
+
+        const responseBody = await response.json() as Record<string, unknown>;
+
+        // 429 Rate Limit — retry with backoff (respect Retry-After if present)
+        if (response.status === 429 && attempt < this.maxRetries) {
+          const retryAfter = response.headers.get('retry-after');
+          if (retryAfter) {
+            const retryMs = Number.parseInt(retryAfter, 10) * 1000;
+            if (retryMs > 0) {
+              await sleep(retryMs);
+            }
+          }
+          lastError = new StripeApiError(
+            `Stripe rate limited (429)`,
+            502
+          );
+          continue;
+        }
+
+        // 5xx Server Error — retry with backoff
+        if (response.status >= 500 && attempt < this.maxRetries) {
+          const errorObj = responseBody.error as Record<string, unknown> | undefined;
+          lastError = new StripeApiError(
+            `Stripe server error (${response.status}): ${errorObj?.message ?? 'Unknown error'}`,
+            502
+          );
+          continue;
+        }
+
+        // 4xx Client Error — do not retry
+        if (response.status >= 400 && response.status < 500) {
+          const errorObj = responseBody.error as Record<string, unknown> | undefined;
+          throw new StripeApiError(
+            `Stripe API error: ${errorObj?.message ?? 'Unknown error'} (${errorObj?.code ?? response.status})`,
+            400,
+            errorObj?.code as string | undefined,
+            errorObj?.type as string | undefined
+          );
+        }
+
+        // 5xx on last attempt — throw
+        if (response.status >= 500) {
+          const errorObj = responseBody.error as Record<string, unknown> | undefined;
+          throw new StripeApiError(
+            `Stripe server error (${response.status}): ${errorObj?.message ?? 'Unknown error'}`,
+            502
+          );
+        }
+
+        return responseBody;
+      } catch (err) {
+        if (err instanceof StripeApiError) {
+          throw err;
+        }
+        // Network error — retry
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt >= this.maxRetries) {
+          throw new StripeApiError(
+            `Stripe request failed after ${this.maxRetries + 1} attempts: ${lastError.message}`,
+            502
+          );
+        }
+      }
+    }
+
+    // Should not reach here, but just in case
+    throw lastError ?? new StripeApiError('Stripe request failed', 502);
   }
 }
 
@@ -274,4 +491,10 @@ export function buildStripeSignatureHeader(
   const ts = timestamp ?? Math.floor(Date.now() / 1000);
   const sig = computeStripeSignature(ts, rawBody, secret);
   return `t=${ts},v1=${sig}`;
+}
+
+// ── Utility ──────────────────────────────────────────────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

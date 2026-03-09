@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Auto-relay runner script for architect agent — task TASK-HARD-013
+# Auto-relay runner script for architect agent — task clawbot-marketplace-md-TASK-HARD-004
 # Project: Clawbot-marketplace
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,7 +21,7 @@ try:
 except: reg = {'agents': []}
 if not isinstance(reg.get('agents'), list): reg['agents'] = []
 agents = [a for a in reg['agents'] if a.get('name') != 'architect']
-agents.append({'name': 'architect', 'role': 'architect', 'status': 'working', 'current_task': 'TASK-HARD-013', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
+agents.append({'name': 'architect', 'role': 'architect', 'status': 'working', 'current_task': 'clawbot-marketplace-md-TASK-HARD-004', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
 reg['agents'] = agents
 with open(reg_path, 'w') as f: json.dump(reg, f, indent=2)
 " 2>/dev/null || true
@@ -32,4 +32,4 @@ SYSTEM_PROMPT="$(cat .claude/agents/architect.md)"
 exec claude \
   --system-prompt "$SYSTEM_PROMPT" \
   --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
-  -p "Work on task TASK-HARD-013: Moltbook token caching layer (Redis). Read .claude/coordination/TASKS.md for details. Update task status as you progress."
+  -p "Work on task clawbot-marketplace-md-TASK-HARD-004: Add Temporal workflow worker runtime. Read .claude/coordination/TASKS.md for details. Update task status as you progress."

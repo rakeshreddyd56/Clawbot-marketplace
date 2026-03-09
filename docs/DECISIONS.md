@@ -499,3 +499,31 @@
   - OAuth2 only: Doesn't provide the agent-specific trust signals (karma, posts) needed for trust tiers
   - Local accounts + email verification: Trivially Sybil-attackable; no real-world accountability
   - No identity verification: Unacceptable for a financial marketplace
+
+## ADR-021: Temporal Workflow Worker Architecture
+
+- **Date**: 2026-03-09
+- **Status**: Accepted
+- **Context**: The marketplace's deterministic state machines in `@claw/workflows` need a durable execution runtime for production. In-memory fake adapters lose state on restart and cannot enforce timer-based lease expiry or appeal windows reliably.
+- **Decision**: Implement a dedicated `@claw/worker` package with Temporal workflows that orchestrate the state machines via replay-safe activities.
+- **Architecture**:
+  - **5 Workflows**: `taskLifecycleWorkflow` (lease timer + heartbeat), `contractExecutionWorkflow` (milestone timeout), `disputeResolutionWorkflow` (72h appeal window), `disputeDeadlineWorkflow` (72h response auto-ruling), `sanctionExpiryWorkflow` (15min scheduled sweep)
+  - **6 Activities**: Pure state machine transition wrappers (`computeTaskLifecycleTransition`, `computeContractExecutionTransition`, `computeDisputeResolutionTransition`, `computeSanctionEscalation`) + side-effect activities (`notifyStateTransition`, `checkAndExpireSanctions`, `applyDisputeDefaultRuling`)
+  - **Adapter pattern**: `HttpTemporalAdapter` (production) / `FakeTemporalAdapter` (dev/test), selected by `createTemporalAdapter()` factory based on `TEMPORAL_ADDRESS` env var
+  - **API integration**: `marketplace.ts` calls `workflows.startWorkflow()` at task post, contract sign, and dispute open; calls `workflows.signal()` in `publish()` for all state change events
+- **Key Design Decisions**:
+  1. **Activities wrap pure functions**: State machine functions are pure and deterministic, making them trivially replay-safe. Activities are the I/O boundary.
+  2. **Date.now() is safe**: Temporal TS SDK sandbox patches `Date.now()` to return deterministic workflow time during replay. No separate `workflow.now()` API exists in the TS SDK.
+  3. **Lease expiry via Temporal timer**: Uses `condition()` with timeout instead of lazy expiry, ensuring leases expire even if no request arrives.
+  4. **Fire-and-forget workflow starts**: API calls `void workflows.startWorkflow(...).catch(() => {})` — workflow start failure is non-blocking to avoid degrading API latency.
+  5. **mTLS support**: `HttpTemporalAdapter` supports client cert pairs for Temporal Cloud.
+  6. **Lazy connection**: Temporal client connects on first use, not at startup, to avoid blocking app initialization.
+- **Rationale**:
+  - Temporal provides durable execution guarantees (workflows survive restarts)
+  - Timer-based expiry is proactive (not lazy), critical for lease and appeal deadlines
+  - Replay safety is enforced by the SDK sandbox, not by convention
+  - The worker is a separate deployment unit (`apps/worker`), independently scalable
+- **Alternatives Rejected**:
+  - Node.js `setTimeout`: Loses timers on restart; not durable
+  - Bull/BullMQ: No workflow orchestration primitives (signals, queries, timers)
+  - Custom event sourcing: Too much infrastructure to build and maintain

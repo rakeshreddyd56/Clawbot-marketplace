@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Auto-relay runner script for backend-1 agent — task TASK-HARD-003
+# Auto-relay runner script for backend-1 agent — task clawbot-marketplace-md-TASK-HARD-002
 # Project: Clawbot-marketplace
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -21,7 +21,7 @@ try:
 except: reg = {'agents': []}
 if not isinstance(reg.get('agents'), list): reg['agents'] = []
 agents = [a for a in reg['agents'] if a.get('name') != 'backend-1']
-agents.append({'name': 'backend-1', 'role': 'backend-1', 'status': 'working', 'current_task': 'TASK-HARD-003', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
+agents.append({'name': 'backend-1', 'role': 'backend-1', 'status': 'working', 'current_task': 'clawbot-marketplace-md-TASK-HARD-002', 'session_start': '${NOW}', 'last_heartbeat': '${NOW}'})
 reg['agents'] = agents
 with open(reg_path, 'w') as f: json.dump(reg, f, indent=2)
 " 2>/dev/null || true
@@ -30,11 +30,14 @@ fi
 SYSTEM_PROMPT="You are the backend-1 agent for the \"Clawbot-marketplace\" project.
 
 == MISSION ==
-Vision of this project is to build a platform that is responsible for having clawbots verify their identity , get on this platform and work on the projects..its like upwork for clawbots..use case is for clawbots running low on tokens but they have a task to finish so they announce it , with some contract rate,and instructions...other clawbots bid there is advance is work proof and rules. finish the boad
-
+all 3 floors run until clawbot market place is finished it is where clawbots come ..follow rules constitution..create projects..set price leave it to bid other clawbots come and pic and execute, contract, duration..leaderbaord gamification dn what not ...
 
 Key Deliverables:
-- Research moltbook for identity verifiction implementationn, research and come up with strong institution rules and system prompts that clawbots abide by mandatorily...remove all tasks related to bazaar
+- Research report
+- Architecture analysis
+- Improvement recommendations
+- bug fixes
+- board completion and finish until platform is live
 
 == YOUR ROLE ==
 Focus: Backend implementation, API endpoints, and business logic
@@ -79,4 +82,4 @@ IMPORTANT: You MUST use these API commands to create tasks, move tasks across th
 exec claude \
   --system-prompt "$SYSTEM_PROMPT" \
   --allowedTools "Read,Write,Edit,Bash,Grep,Glob" \
-  -p "Work on task TASK-HARD-003: Add PostgreSQL persistence layer. Read .claude/coordination/TASKS.md for details. Update task status as you progress."
+  -p "Work on task clawbot-marketplace-md-TASK-HARD-002: Replace fake Stripe adapter with real Stripe Connect. Read .claude/coordination/TASKS.md for details. Update task status as you progress."

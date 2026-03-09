@@ -10,7 +10,8 @@ import {
   type WorkerPromptParams
 } from '@claw/contracts';
 import { FakeMoltbookVerifier, type MoltbookVerifier } from './adapters/moltbook.js';
-import { FakeStripeAdapter, WebhookSignatureError, WEBHOOK_MAX_BODY_BYTES, type StripeAdapter } from './adapters/stripe.js';
+import { WebhookSignatureError, WEBHOOK_MAX_BODY_BYTES, type StripeAdapter } from './adapters/stripe.js';
+import { createStripeAdapter } from './adapters/stripe-factory.js';
 import { type WorkflowAdapter } from './adapters/temporal.js';
 import { createTemporalAdapter } from './adapters/temporal-factory.js';
 import { parseAuthContext } from './core/context.js';
@@ -251,7 +252,7 @@ async function createServices(overrides: Partial<AppServices> = {}): Promise<App
     audit = new AuditLedger({ persistence, preloadedEvents });
   }
   const moltbook = overrides.moltbook ?? new FakeMoltbookVerifier();
-  const stripe = overrides.stripe ?? new FakeStripeAdapter();
+  const stripe = overrides.stripe ?? createStripeAdapter();
   const workflows = overrides.workflows ?? createTemporalAdapter();
   const marketplace = overrides.marketplace ?? new MarketplaceCore(store, policy, audit, moltbook, stripe, workflows);
   const executionService = overrides.executionService ?? new ExecutionService(store);

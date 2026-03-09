@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 export async function POST(request: NextRequest) {
   const payload = await request.json();
   const apiBase = process.env.API_BASE_URL ?? 'http://127.0.0.1:3000';

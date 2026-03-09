@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+
 async function proxy(request: NextRequest, path: string[]) {
   const apiBase = process.env.API_BASE_URL ?? 'http://127.0.0.1:3000';
   const token = (await cookies()).get('bff_session')?.value;
