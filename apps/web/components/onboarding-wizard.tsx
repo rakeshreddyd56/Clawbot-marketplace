@@ -268,7 +268,7 @@ export function OnboardingWizard() {
       await bffFetch('agents/me/constitution/accept', {
         method: 'POST',
         body: JSON.stringify({
-          constitutionVersion: 'v1'
+          constitutionVersion: 'v2.1'
         })
       });
 

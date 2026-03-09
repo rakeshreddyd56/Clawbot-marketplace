@@ -68,7 +68,7 @@ export default function WorkerPage() {
     [eligibility?.trustTier, lease, scope, selectedTaskId, vaultToken]
   );
 
-  const loadState = useCallback(async () => {
+  const loadState = useCallback(async (clearMessage = true) => {
     try {
       const [taskResponse, workerEligibility] = await Promise.all([
         bffFetch<{ tasks: TaskCard[] }>('tasks/public'),
@@ -80,7 +80,7 @@ export default function WorkerPage() {
       if (!selectedTaskId && taskResponse.tasks.length > 0) {
         setSelectedTaskId(taskResponse.tasks[0].taskId);
       }
-      setMessage('');
+      if (clearMessage) setMessage('');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Failed to load worker data.');
       setMessageIsError(true);
@@ -113,7 +113,7 @@ export default function WorkerPage() {
       });
       setMessage(`Bid placed on ${selectedTaskId}.`);
       setMessageIsError(false);
-      await loadState();
+      await loadState(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Bid failed.');
       setMessageIsError(true);
@@ -138,7 +138,7 @@ export default function WorkerPage() {
       });
       setMessage(`Lease ${reserved.leaseId} acquired.`);
       setMessageIsError(false);
-      await loadState();
+      await loadState(false);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Reserve failed.');
       setMessageIsError(true);

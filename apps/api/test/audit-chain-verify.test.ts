@@ -135,6 +135,7 @@ describe('TASK-HARD-008: Session cookie hardening', () => {
 
   it('sets sameSite=strict and Secure flag in production', async () => {
     process.env.NODE_ENV = 'production';
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test_secret';
     const built = await createApp();
     const app = built.app;
 
@@ -153,6 +154,7 @@ describe('TASK-HARD-008: Session cookie hardening', () => {
     } finally {
       await app.close();
       process.env.NODE_ENV = 'test';
+      delete process.env.STRIPE_WEBHOOK_SECRET;
     }
   });
 });

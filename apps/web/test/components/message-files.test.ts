@@ -65,48 +65,48 @@ describe('Translation message files', () => {
       'nav.worker',
       'nav.moderator',
       'nav.admin',
-      'nav.models',
+      'nav.constitution',
       'nav.home',
     ])('has key "%s" in both locales', (key) => {
       expect(enKeys).toContain(key);
       expect(hiKeys).toContain(key);
     });
 
-    // Catalog keys
+    // Onboarding keys
     it.each([
-      'catalog.searchPlaceholder',
-      'catalog.filterOrigin',
-      'catalog.filterCapability',
-      'catalog.filterLanguage',
-      'catalog.indianOriginOnly',
-      'catalog.sortBy',
+      'onboarding.title',
+      'onboarding.subtitle',
+      'onboarding.verifyIdentity',
+      'onboarding.createSession',
+      'onboarding.saveCapabilities',
+      'onboarding.acceptConstitution',
     ])('has key "%s" in both locales', (key) => {
       expect(enKeys).toContain(key);
       expect(hiKeys).toContain(key);
     });
 
-    // Model card keys
+    // Marketplace keys
     it.each([
-      'modelCard.capabilities',
-      'modelCard.languages',
-      'modelCard.indianLanguages',
-      'modelCard.origin',
-      'modelCard.provider',
-      'modelCard.license',
-      'modelCard.parameters',
-      'modelCard.viewDetails',
+      'marketplace.postTask',
+      'marketplace.browseTasks',
+      'marketplace.placeBid',
+      'marketplace.acceptBid',
+      'marketplace.reserveLease',
+      'marketplace.submitArtifact',
+      'marketplace.openDispute',
+      'marketplace.topUpWallet',
     ])('has key "%s" in both locales', (key) => {
       expect(enKeys).toContain(key);
       expect(hiKeys).toContain(key);
     });
 
-    // Model detail keys
+    // Identity keys
     it.each([
-      'modelDetail.description',
-      'modelDetail.useCases',
-      'modelDetail.reviews',
-      'modelDetail.rateThisModel',
-      'modelDetail.submitRating',
+      'identity.verified',
+      'identity.expired',
+      'identity.needsReverify',
+      'identity.fresh',
+      'identity.trustTierA',
     ])('has key "%s" in both locales', (key) => {
       expect(enKeys).toContain(key);
       expect(hiKeys).toContain(key);

@@ -24,6 +24,8 @@ import type {
   ArtifactRecord,
   AuditEvent,
   AssignmentLease,
+  BidPatternAnalysis,
+  CollusionAlert,
   ConstitutionAcceptance,
   ConstitutionVersionRecord,
   ContractTerms,
@@ -772,6 +774,21 @@ export class PgStore {
             `INSERT INTO banned_owner_handles (x_handle) VALUES ($1) ON CONFLICT DO NOTHING`,
             [handle]
           );
+        }
+      ),
+
+      // Collusion detection: alerts raised by bid pattern analysis
+      collusionAlerts: createWriteThroughMap<string, CollusionAlert>(
+        new Map(),
+        async (_key, _value) => {
+          // TODO: persist collusion alerts to PG when detection is implemented
+        }
+      ),
+      // Collusion detection: per-agent bid pattern analysis snapshots
+      bidPatternAnalyses: createWriteThroughMap<string, BidPatternAnalysis>(
+        new Map(),
+        async (_key, _value) => {
+          // TODO: persist bid pattern analyses to PG when detection is implemented
         }
       ),
 

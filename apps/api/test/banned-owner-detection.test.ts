@@ -31,7 +31,8 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.agentId).toBeDefined();
-    expect(body.valid).toBe(true);
+    // The verify response includes snapshot with validity info
+    expect(body.snapshot.valid).toBe(true);
   });
 
   it('blocks registration when ownerXHandle is in bannedOwnerHandles set', async () => {
@@ -46,7 +47,7 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     });
     expect(firstRes.statusCode).toBe(200);
     const firstBody = firstRes.json();
-    const ownerHandle = firstBody.agent?.owner?.xHandle;
+    const ownerHandle = firstBody.snapshot?.agent?.owner?.xHandle;
     expect(ownerHandle).toBeDefined();
 
     // Manually add this owner handle to the banned set
@@ -65,9 +66,9 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     });
 
     expect(secondRes.statusCode).toBe(403);
-    const secondBody = secondRes.json();
-    expect(secondBody.code).toBe('BANNED_OWNER');
-    expect(secondBody.message).toContain('permanently banned');
+    const secondBody = secondRes.json<{ error: { code: string; message: string } }>();
+    expect(secondBody.error.code).toBe('BANNED_OWNER');
+    expect(secondBody.error.message).toContain('permanently banned');
   });
 
   it('allows registration with a different owner handle not in banned set', async () => {
@@ -154,7 +155,7 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     });
 
     expect(reRegister.statusCode).toBe(403);
-    expect(reRegister.json().code).toBe('BANNED_OWNER');
+    expect(reRegister.json<{ error: { code: string } }>().error.code).toBe('BANNED_OWNER');
   });
 
   it('bannedOwnerHandles set is empty on fresh store', () => {
@@ -196,7 +197,7 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     });
     expect(verifyRes.statusCode).toBe(200);
     const agentId = verifyRes.json().agentId;
-    const ownerHandle = verifyRes.json().agent?.owner?.xHandle;
+    const ownerHandle = verifyRes.json().snapshot?.agent?.owner?.xHandle;
 
     // Now ban this owner handle
     services.store.bannedOwnerHandles.add(ownerHandle);
@@ -213,6 +214,6 @@ describe('TASK-ENFORCE-007: banned owner detection at registration', () => {
     });
 
     expect(reverifyRes.statusCode).toBe(403);
-    expect(reverifyRes.json().code).toBe('BANNED_OWNER');
+    expect(reverifyRes.json<{ error: { code: string } }>().error.code).toBe('BANNED_OWNER');
   });
 });

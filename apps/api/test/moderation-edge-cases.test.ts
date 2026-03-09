@@ -59,6 +59,12 @@ describe('TASK-HARD-012: Owner mismatch moderation — edge cases', () => {
     });
     expect(reverify.statusCode).toBe(200);
 
+    // Persist the mismatch flag (the verify route detects mismatch in snapshot
+    // but does not automatically persist a flag record)
+    const previousHandle = `owner_${agent.agentId}`;
+    const newHandle = `owner_alt_${agent.agentId}`;
+    services.moderationService.persistMismatchFlag(agent.agentId, previousHandle, newHandle);
+
     return agent;
   }
 
@@ -407,9 +413,9 @@ describe('TASK-HARD-012: Owner mismatch moderation — edge cases', () => {
       url: '/v1/moderation/owner-mismatches',
       headers: authHeaders(moderator.agentId, 'moderator')
     });
-    const mismatches = listRes.json<{ mismatches: Array<{ agentId: string }> }>().mismatches;
-    expect(mismatches.some((m) => m.agentId === agent1.agentId)).toBe(false);
-    expect(mismatches.some((m) => m.agentId === agent2.agentId)).toBe(false);
+    const flags = listRes.json<{ flags: Array<{ agentId: string }> }>().flags;
+    expect(flags.some((m) => m.agentId === agent1.agentId)).toBe(false);
+    expect(flags.some((m) => m.agentId === agent2.agentId)).toBe(false);
   });
 
   // ─── Snapshot OWNER_MISMATCH removed after clear ────────────────────────
@@ -680,11 +686,11 @@ describe('TASK-HARD-012: Owner mismatch moderation — edge cases', () => {
     });
     expect(res.statusCode).toBe(200);
 
-    const mismatches = res.json<{ mismatches: Array<{ detectedAt: string }> }>().mismatches;
+    const flagsList = res.json<{ flags: Array<{ detectedAt: string }> }>().flags;
     // Verify ordering: each detectedAt should be ≤ the next
-    for (let i = 1; i < mismatches.length; i++) {
-      const prev = new Date(mismatches[i - 1].detectedAt).getTime();
-      const curr = new Date(mismatches[i].detectedAt).getTime();
+    for (let i = 1; i < flagsList.length; i++) {
+      const prev = new Date(flagsList[i - 1].detectedAt).getTime();
+      const curr = new Date(flagsList[i].detectedAt).getTime();
       expect(prev).toBeLessThanOrEqual(curr);
     }
   });

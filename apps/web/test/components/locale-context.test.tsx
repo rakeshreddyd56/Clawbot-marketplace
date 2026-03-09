@@ -93,9 +93,9 @@ describe('LocaleContext', () => {
       );
       const keys = screen.getByTestId('messages-keys').textContent;
       expect(keys).toContain('nav');
-      expect(keys).toContain('catalog');
-      expect(keys).toContain('modelCard');
-      expect(keys).toContain('modelDetail');
+      expect(keys).toContain('onboarding');
+      expect(keys).toContain('marketplace');
+      expect(keys).toContain('identity');
       expect(keys).toContain('common');
     });
   });

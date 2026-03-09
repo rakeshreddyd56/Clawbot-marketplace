@@ -13,7 +13,9 @@ export class VaultService {
     const lease = this.store.leases.get(input.leaseId);
     assertDomain(Boolean(lease), 'LEASE_NOT_FOUND', 'Lease not found.', 404);
     assertDomain(lease!.taskId === input.taskId, 'LEASE_TASK_MISMATCH', 'Lease/task mismatch.', 409);
-    assertDomain(lease!.status === 'ACTIVE' || lease!.status === 'CLOSED', 'LEASE_INACTIVE', 'Lease inactive.', 409);
+    // BUG-MED-004: Only ACTIVE leases should grant vault tokens.
+    // CLOSED leases have completed their lifecycle and must not issue new tokens.
+    assertDomain(lease!.status === 'ACTIVE', 'LEASE_INACTIVE', 'Lease is not active. Only active leases can issue vault tokens.', 409);
 
     const ownerAllowed = actor.actorAgentId === task!.requesterAgentId || actor.role === 'admin';
     const workerAllowed = actor.actorAgentId === lease!.workerAgentId;

@@ -2,7 +2,9 @@ import type {
   AgentProfile,
   ArtifactRecord,
   AssignmentLease,
+  BidPatternAnalysis,
   CapabilityManifest,
+  CollusionAlert,
   ConstitutionAcceptance,
   ConstitutionVersionRecord,
   ContractTerms,
@@ -72,6 +74,10 @@ export type Store = {
   leaseOutcomeLog: Map<string, { leaseId: string; outcome: 'EXPIRED' | 'CLOSED'; timestamp: string }[]>;
   /** TASK-ENFORCE-007: Banned owner X handles. Prevents re-registration under new Moltbook accounts. */
   bannedOwnerHandles: Set<string>;
+  /** Collusion detection: alerts raised by bid pattern analysis. Key: alertId */
+  collusionAlerts: Map<string, CollusionAlert>;
+  /** Collusion detection: per-agent bid pattern analysis snapshots. Key: agentId */
+  bidPatternAnalyses: Map<string, BidPatternAnalysis>;
 };
 
 export type AuthContext = {

@@ -223,9 +223,9 @@ export default function RequesterPage() {
         })
       });
       setLastContractId(contract.contractId);
+      await loadTasks();
       setMessage(`Contract ${contract.contractId} created.`);
       setMessageIsError(false);
-      await loadTasks();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Task acceptance failed.');
       setMessageIsError(true);

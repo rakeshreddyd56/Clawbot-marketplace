@@ -114,9 +114,10 @@ export default function ModeratorPage() {
           targetAgentId
         })
       });
+      // Reload evidence to reflect new state, then show resolve message
+      try { await loadEvidence(); } catch { /* ignore reload errors */ }
       setMessage(`Dispute ${disputeId} resolved with ruling "${ruling}".`);
       setMessageIsError(false);
-      await loadEvidence();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Dispute resolve failed.');
       setMessageIsError(true);
@@ -242,7 +243,7 @@ export default function ModeratorPage() {
               type="button"
               onClick={() => void resolveDispute()}
               disabled={loading !== null || !disputeId || !targetAgentId}
-              aria-label="Finalize the ruling for this dispute"
+              aria-label={loading === 'resolve' ? 'Resolving dispute' : 'Finalize the ruling for this dispute'}
             >
               {loading === 'resolve' ? (
                 <>

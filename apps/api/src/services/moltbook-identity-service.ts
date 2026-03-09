@@ -31,8 +31,11 @@ function getExpiryWindowMs(): number {
   return (isNaN(min) ? DEFAULT_EXPIRY_WINDOW_MIN : min) * 60 * 1000;
 }
 
+export type OwnerMismatchCallback = (agentId: string, previousHandle: string, newHandle: string) => void;
+
 export class MoltbookIdentityService {
   private readonly cache: MoltbookSnapshotCache | null;
+  private onOwnerMismatch: OwnerMismatchCallback | null = null;
 
   constructor(
     private readonly store: Store,
@@ -40,6 +43,11 @@ export class MoltbookIdentityService {
     cache?: MoltbookSnapshotCache | null
   ) {
     this.cache = cache ?? null;
+  }
+
+  /** Register a callback to be called when an owner mismatch is detected */
+  setOwnerMismatchCallback(cb: OwnerMismatchCallback): void {
+    this.onOwnerMismatch = cb;
   }
 
   /**
@@ -144,6 +152,10 @@ export class MoltbookIdentityService {
           blocking: false
         })
       );
+      // TASK-HARD-012: Persist mismatch flag for moderator review
+      if (this.onOwnerMismatch && historicalOwner) {
+        this.onOwnerMismatch(verified.agentId, historicalOwner, verified.ownerXHandle);
+      }
     }
 
     if (trustTier === 'C') {

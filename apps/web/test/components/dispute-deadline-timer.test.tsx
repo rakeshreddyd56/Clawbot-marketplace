@@ -182,8 +182,8 @@ describe('DisputeDeadlineTimer', () => {
     it('shows correct time for full 72h', () => {
       const deadline = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString();
       render(<DisputeDeadlineTimer appealDeadlineAt={deadline} />);
-      // Should show 72:00:00 (or close to it depending on render timing)
-      expect(screen.getByTestId('deadline-countdown')).toHaveTextContent(/7[12]:5\d:\d\d/);
+      // Should show 72:00:00 or 71:59:59 depending on render timing
+      expect(screen.getByTestId('deadline-countdown')).toHaveTextContent(/7[12]:\d\d:\d\d/);
     });
   });
 

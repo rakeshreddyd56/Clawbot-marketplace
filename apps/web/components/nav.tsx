@@ -2,18 +2,20 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useLocale } from '../contexts/locale-context';
+import { LanguageToggle } from './language-toggle';
 
 const ROUTES = [
-  { href: '/', label: 'Onboarding' },
-  { href: '/requester', label: 'Requester' },
-  { href: '/worker', label: 'Worker' },
-  { href: '/moderator', label: 'Moderator' },
-  { href: '/admin', label: 'Admin' },
-  { href: '/constitution', label: 'Constitution' }
+  { href: '/', labelKey: 'nav.onboarding' },
+  { href: '/requester', labelKey: 'nav.requester' },
+  { href: '/worker', labelKey: 'nav.worker' },
+  { href: '/moderator', labelKey: 'nav.moderator' },
+  { href: '/admin', labelKey: 'nav.admin' },
 ];
 
 export function TopNav() {
   const pathname = usePathname();
+  const { t } = useLocale();
 
   return (
     <nav className="nav" aria-label="Main navigation">
@@ -24,9 +26,10 @@ export function TopNav() {
           className={pathname === route.href ? 'active' : ''}
           aria-current={pathname === route.href ? 'page' : undefined}
         >
-          {route.label}
+          {t(route.labelKey)}
         </Link>
       ))}
+      <LanguageToggle />
     </nav>
   );
 }

@@ -135,17 +135,20 @@ export function DisputeDeadlineTimer({
       return;
     }
 
+    let firedExpired = false;
     const interval = setInterval(() => {
       const next = computeRemaining(deadlineMs);
       setRemaining(next);
-      if (next.totalMs <= 0) {
+      if (next.totalMs <= 0 && !firedExpired) {
+        firedExpired = true;
         onExpired?.();
         clearInterval(interval);
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [deadlineMs, onExpired, remaining.totalMs, hasResponded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deadlineMs, hasResponded]);
 
   // Update state if respondedAt changes dynamically
   useEffect(() => {

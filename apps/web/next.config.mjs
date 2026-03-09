@@ -8,7 +8,8 @@ const __dirname = path.dirname(__filename);
 const nextConfig = {
   reactStrictMode: true,
   typedRoutes: false,
-  outputFileTracingRoot: path.join(__dirname, '../..')
+  outputFileTracingRoot: path.join(__dirname, '../..'),
+  output: 'standalone'
 };
 
 export default nextConfig;

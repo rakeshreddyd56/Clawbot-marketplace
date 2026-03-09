@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within } from '../test-utils';
 import { EvidenceRail } from '../../components/evidence-rail';
 import type { EvidenceItem } from '../../components/evidence-rail';
 
@@ -84,7 +84,7 @@ describe('EvidenceRail', () => {
     const { container } = render(<EvidenceRail title="T" items={baseItems} />);
     const details = container.querySelector('.mobile-rail');
     const summary = details?.querySelector('summary');
-    expect(summary?.textContent).toBe('Evidence');
+    expect(summary?.textContent).toBe('Evidence: T');
   });
 
   it('renders empty list gracefully', () => {

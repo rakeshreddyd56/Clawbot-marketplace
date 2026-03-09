@@ -654,6 +654,8 @@ export class MarketplaceCore {
   resolveDispute(actor: AuthContext, disputeId: string, ruling: 'pay_worker' | 'refund_requester' | 'split', targetAgentId: string): DisputeCase {
     this.requireRole(actor, ['moderator', 'admin']);
     const dispute = this.getDispute(disputeId);
+    // BUG-MAJ-NEW-001: Prevent double-resolution of already-finalized disputes
+    assertDomain(dispute.status !== 'FINAL', 'DISPUTE_ALREADY_FINAL', 'Dispute has already been resolved to FINAL status.', 409);
     const contract = this.getContract(dispute.contractId);
 
     // BUG-HIGH-003: Validate targetAgentId is a party to the dispute contract.

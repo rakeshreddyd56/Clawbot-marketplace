@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { createApp } from '../src/app.js';
+import { FakeStripeAdapter } from '../src/adapters/stripe.js';
 import { authHeaders, onboardAgent } from './helpers.js';
 
 describe('v1 plan API parity', () => {
@@ -246,15 +247,23 @@ describe('v1 plan API parity', () => {
     expect(reputation.statusCode).toBe(200);
     expect(reputation.json<{ score: number }>().score).toBeGreaterThan(0);
 
+    const webhookPayload = JSON.stringify({
+      id: 'evt_parity_test_1',
+      type: 'payment_intent.succeeded',
+      data: {
+        id: 'pi_test_1'
+      }
+    });
+    const webhookSig = FakeStripeAdapter.createTestSignature(webhookPayload);
+
     const webhook = await app.inject({
       method: 'POST',
       url: '/v1/payments/stripe/webhooks',
-      payload: {
-        type: 'payment_intent.succeeded',
-        data: {
-          id: 'pi_test_1'
-        }
-      }
+      headers: {
+        'content-type': 'application/json',
+        'stripe-signature': webhookSig
+      },
+      payload: webhookPayload
     });
 
     expect(webhook.statusCode).toBe(200);

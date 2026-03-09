@@ -33,6 +33,8 @@ export function createStore(): Store {
     currentConstitutionVersion: 'v1',
     constitutionAcceptances: new Map(),
     leaseOutcomeLog: new Map(),
-    bannedOwnerHandles: new Set()
+    bannedOwnerHandles: new Set(),
+    collusionAlerts: new Map(),
+    bidPatternAnalyses: new Map()
   };
 }

@@ -58,6 +58,12 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
     });
     expect(reverify.statusCode).toBe(200);
 
+    // Persist the mismatch flag (the verify route detects mismatch in snapshot
+    // but does not automatically persist a flag record)
+    const previousHandle = `owner_${agent.agentId}`;
+    const newHandle = `owner_alt_${agent.agentId}`;
+    services.moderationService.persistMismatchFlag(agent.agentId, previousHandle, newHandle);
+
     return agent;
   }
 
@@ -99,7 +105,7 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
     });
 
     expect(payout.statusCode).toBe(403);
-    expect(payout.json<{ error: { code: string } }>().error.code).toBe('PAYOUT_BLOCKED');
+    expect(payout.json<{ error: { code: string } }>().error.code).toBe('WORKER_PAYOUT_BLOCKED');
   });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -121,9 +127,9 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    const body = res.json<{ mismatches: Array<{ agentId: string; flagId: string }> }>();
-    expect(body.mismatches.length).toBeGreaterThanOrEqual(1);
-    const agentMismatch = body.mismatches.find((m) => m.agentId === agentId);
+    const body = res.json<{ flags: Array<{ agentId: string; flagId: string }> }>();
+    expect(body.flags.length).toBeGreaterThanOrEqual(1);
+    const agentMismatch = body.flags.find((m) => m.agentId === agentId);
     expect(agentMismatch).toBeTruthy();
     expect(agentMismatch!.flagId).toBeTruthy();
   });
@@ -147,7 +153,7 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(res.json<{ mismatches: unknown[] }>().mismatches.length).toBeGreaterThanOrEqual(1);
+    expect(res.json<{ flags: unknown[] }>().flags.length).toBeGreaterThanOrEqual(1);
   });
 
   // ──────────────────────────────────────────────────────────────────────
@@ -376,6 +382,11 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
       }
     });
 
+    // Persist the new mismatch flag (reversed handles after clear)
+    const newPrevHandle = `owner_alt_${agentId}`;
+    const newNewHandle = `owner_${agentId}`;
+    services.moderationService.persistMismatchFlag(agentId, newPrevHandle, newNewHandle);
+
     await app.inject({
       method: 'POST',
       url: `/v1/moderation/agents/${agentId}/ban-owner-mismatch`,
@@ -408,8 +419,8 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
       url: '/v1/moderation/owner-mismatches',
       headers: authHeaders(moderator.agentId, 'moderator')
     });
-    const before = listBefore.json<{ mismatches: Array<{ agentId: string }> }>();
-    expect(before.mismatches.some((m) => m.agentId === agentId)).toBe(true);
+    const before = listBefore.json<{ flags: Array<{ agentId: string }> }>();
+    expect(before.flags.some((m) => m.agentId === agentId)).toBe(true);
 
     // Clear it
     await app.inject({
@@ -425,8 +436,8 @@ describe('TASK-HARD-012: Owner mismatch moderator review workflow', () => {
       url: '/v1/moderation/owner-mismatches',
       headers: authHeaders(moderator.agentId, 'moderator')
     });
-    const after = listAfter.json<{ mismatches: Array<{ agentId: string }> }>();
-    expect(after.mismatches.some((m) => m.agentId === agentId)).toBe(false);
+    const after = listAfter.json<{ flags: Array<{ agentId: string }> }>();
+    expect(after.flags.some((m) => m.agentId === agentId)).toBe(false);
   });
 
   // ──────────────────────────────────────────────────────────────────────

@@ -52,7 +52,8 @@ export class FakeMoltbookVerifier implements MoltbookVerifier {
     const posts = tierC ? 2 : tierB ? 6 : 32;
     const comments = tierC ? 3 : tierB ? 7 : 36;
     // When token includes 'owner_alt', produce a different ownerXHandle for the same agentId
-    const ownerXHandle = tokenLower.includes('owner_alt') ? `owner_alt_${agentId.slice(-6)}` : `owner_${agentId.slice(-8)}`;
+    // Use full agentId to avoid collisions when token seeds share suffixes (e.g. requester_escrow_lock vs worker_escrow_lock)
+    const ownerXHandle = tokenLower.includes('owner_alt') ? `owner_alt_${agentId}` : `owner_${agentId}`;
 
     return {
       valid,

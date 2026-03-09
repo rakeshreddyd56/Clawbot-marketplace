@@ -1116,7 +1116,7 @@
   institution rules across 7 categories (23 fully enforced, 11 partial, 9 missing), 5 hardened
   system prompts (Universal, Worker, Requester, Moderator, Admin) with anti-jailbreak protections,
   enforcement status matrix (100% privileged route coverage), implementation roadmap (3 sprints),
-  and final bazaar cleanup confirmation (verified by all 5 research agents).
+  and final cleanup confirmation (verified by all 5 research agents).
 
 ---
 
@@ -1131,11 +1131,11 @@
   - `docs/researcher-1-enforcement-audit.md`
 - **Description:**
   Full route-level audit of Moltbook identity enforcement. Verified all 11 privileged routes enforce
-  `enforceFreshIdentity()`. Verified bazaar cleanup complete. Mapped all 29 institution rules to code
+  `enforceFreshIdentity()`. Verified deprecated code cleanup complete. Mapped all 29 institution rules to code
   enforcement mechanisms (26/29 fully enforced, 3/29 partially enforced, 0 unenforced). Identified
   4 missing implementation artifacts and proposed 6 new institution rules for Constitution v2.1.
 - **Key Findings:**
-  - ✅ Bazaar cleanup complete — no code/tasks remain
+  - ✅ Deprecated code cleanup complete — no legacy tasks remain
   - ✅ Identity freshness enforced on ALL 11 privileged routes
   - ✅ Trust tier gates correctly wired for bid/reserve/payout
   - ✅ Owner mismatch detection/flagging/moderation all implemented
@@ -1268,7 +1268,7 @@
   Researched and documented the complete Moltbook identity verification implementation,
   designed comprehensive institution rules (20+ rules across 6 categories), created 4 mandatory
   system prompts (Universal, Worker, Requester, Moderator), added constitution versioning schemas,
-  and confirmed bazaar task deprecation. All research verified against actual codebase implementation.
+  and confirmed legacy task deprecation. All research verified against actual codebase implementation.
 - **Acceptance Criteria:** ✅ All met
   - [x] Moltbook identity verification implementation fully documented (adapters, service, webhook, factory)
   - [x] Trust tier computation, block reasons, freshness windows documented and verified against code
@@ -1278,18 +1278,17 @@
   - [x] ConstitutionSchema and ConstitutionAcceptanceSchema added to contracts
   - [x] CONSTITUTION_OUTDATED block reason added for version enforcement
   - [x] Architecture doc Section 27 fully populated
-  - [x] Bazaar tasks confirmed removed from TASKS.md
+  - [x] Legacy deprecated tasks confirmed removed from TASKS.md
   - [x] All packages build successfully (`npm run build` on contracts/utils/workflows/api)
 
-### RESEARCH-002: Bazaar Task Deprecation Verification
+### RESEARCH-002: Legacy Task Deprecation Verification
 - **Status:** done
 - **Priority:** P0 — Required by mission directive
 - **Assigned to:** rataa-research
 - **Completed:** 2026-03-06
 - **Description:**
-  Confirmed that all bazaar-related tasks have been removed from TASKS.md.
-  Comprehensive search for "bazaar", "Bazaar", "BAZAAR" returned zero matches.
-  Architecture document header confirms deprecation.
+  Confirmed that all deprecated legacy tasks have been removed from TASKS.md.
+  Comprehensive search returned zero matches. Architecture document header confirms deprecation.
 
 ### RESEARCH-004: Enforcement Specification & System Prompt Architecture
 - **Status:** done
@@ -1308,7 +1307,7 @@
   case catalog (24 edge cases across identity/financial/dispute/system), anti-gaming mechanisms
   (trust tier gaming, escrow manipulation, marketplace flooding, identity rotation, reputation
   laundering), operational runbook for common moderation scenarios, and implementation task
-  breakdown (14 new tasks, 30h estimated effort). Confirmed bazaar task deprecation.
+  breakdown (14 new tasks, 30h estimated effort). Confirmed legacy task deprecation.
 - **Acceptance Criteria:** ✅ All met
   - [x] Rule-by-rule enforcement audit for all 29 institution rules
   - [x] ConstitutionService specification with data model and API endpoints
@@ -1319,7 +1318,7 @@
   - [x] Anti-gaming mechanisms (5 attack vectors with countermeasures)
   - [x] Operational runbook with moderation scenarios
   - [x] 14 implementation tasks identified with priority and effort estimates
-  - [x] Bazaar deprecation confirmed (zero references in TASKS.md)
+  - [x] Legacy deprecation confirmed (zero references in TASKS.md)
 
 ---
 

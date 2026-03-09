@@ -476,6 +476,61 @@ export const ConstitutionAcceptanceSchema = z.object({
 });
 export type ConstitutionAcceptance = z.infer<typeof ConstitutionAcceptanceSchema>;
 
+// ─── Collusion Detection (Rules C-3, C-7, M-3, M-8) ────────────────────────
+
+export const CollusionAlertTypeSchema = z.enum([
+  'SHILL_BIDDING',           // Agent bidding on own tasks via related identity
+  'RING_TRADING',            // Two+ agents repeatedly exchanging tasks to farm reputation
+  'PRICE_FIXING',            // Coordinated bid amounts across multiple agents
+  'GHOST_BIDDING',           // Bidding without intent to complete (low bid-to-completion ratio)
+  'REPUTATION_FARMING',      // Artificial activity inflation (small tasks, instant accept)
+  'IDENTITY_ROTATION'        // Multiple accounts from same owner for marketplace manipulation
+]);
+export type CollusionAlertType = z.infer<typeof CollusionAlertTypeSchema>;
+
+export const CollusionAlertSchema = z.object({
+  alertId: z.string(),
+  alertType: CollusionAlertTypeSchema,
+  severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  agentIds: z.array(z.string()),
+  evidence: z.object({
+    description: z.string(),
+    dataPoints: z.array(z.object({
+      metric: z.string(),
+      value: z.union([z.string(), z.number()]),
+      threshold: z.union([z.string(), z.number()]).optional()
+    })),
+    relatedTaskIds: z.array(z.string()).optional(),
+    relatedContractIds: z.array(z.string()).optional()
+  }),
+  status: z.enum(['OPEN', 'INVESTIGATING', 'CONFIRMED', 'DISMISSED']),
+  detectedAt: z.string(),
+  resolvedAt: z.string().optional(),
+  resolvedBy: z.string().optional(),
+  resolution: z.string().optional(),
+  autoSanctioned: z.boolean().default(false)
+});
+export type CollusionAlert = z.infer<typeof CollusionAlertSchema>;
+
+export const BidPatternAnalysisSchema = z.object({
+  agentId: z.string(),
+  windowStartAt: z.string(),
+  windowEndAt: z.string(),
+  totalBids: z.number(),
+  completedTasks: z.number(),
+  abandonedLeases: z.number(),
+  bidToCompletionRatio: z.number(),
+  uniqueCounterparties: z.number(),
+  avgBidAmount: z.number(),
+  repeatedCounterpartyPairs: z.array(z.object({
+    counterpartyId: z.string(),
+    interactions: z.number()
+  })),
+  suspicionScore: z.number().min(0).max(100),
+  analyzedAt: z.string()
+});
+export type BidPatternAnalysis = z.infer<typeof BidPatternAnalysisSchema>;
+
 // ─── System Prompts ─────────────────────────────────────────────────────────
 export {
   CONSTITUTION_VERSION,

@@ -21,13 +21,14 @@ export function LanguageToggle() {
     <button
       type="button"
       className="language-toggle"
+      data-testid="language-toggle"
       onClick={() => setLocale(nextLocale)}
       aria-label={`Switch language to ${nextLocale === 'hi' ? 'Hindi' : 'English'}`}
       aria-pressed={locale === 'hi'}
     >
-      <span className={locale === 'en' ? 'active' : ''}>EN</span>
+      <span className={locale === 'en' ? 'language-toggle-active' : 'language-toggle-inactive'}>EN</span>
       <span aria-hidden="true"> | </span>
-      <span className={locale === 'hi' ? 'active' : ''}>हिन्दी</span>
+      <span className={locale === 'hi' ? 'language-toggle-active' : 'language-toggle-inactive'}>हिन्दी</span>
     </button>
   );
 }

@@ -634,11 +634,13 @@ describe('OnboardingWizard — Step 5-6: Freshness + re-verify', () => {
 
   it('shows "Re-verify now" button in readiness section once session is active', async () => {
     const user = userEvent.setup();
-    vi.mocked(bffFetch)
-      .mockResolvedValueOnce(snapshotAllowed)
-      .mockResolvedValueOnce(statusResponse)
-      .mockResolvedValueOnce(readinessResponse)
-      .mockResolvedValueOnce(eligibilityResponse);
+    vi.mocked(bffFetch).mockImplementation(async (path: string) => {
+      if (path === 'identity/moltbook/verify') return snapshotAllowed;
+      if (path === 'identity/moltbook/status') return statusResponse;
+      if (path.startsWith('onboarding/readiness')) return readinessResponse;
+      if (path === 'worker/eligibility') return eligibilityResponse;
+      throw new Error(`Unexpected bffFetch path: ${path}`);
+    });
 
     vi.mocked(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
@@ -651,7 +653,7 @@ describe('OnboardingWizard — Step 5-6: Freshness + re-verify', () => {
     await user.click(screen.getByRole('button', { name: '2. Create BFF session' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Re-verify now' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Re-verify your session now' })).toBeInTheDocument();
     });
   });
 });

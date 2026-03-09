@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import { CONSTITUTION_VERSION, INSTITUTION_RULES } from '@claw/contracts/system-prompts';
 import { ConsoleShell } from '../../components/console-shell';
 import { EvidenceRail } from '../../components/evidence-rail';
 import type { EvidenceItem } from '../../components/evidence-rail';
@@ -9,10 +10,10 @@ import { ConstitutionViewer } from '../../components/constitution-viewer';
 export default function ConstitutionPage() {
   const evidenceItems = useMemo<EvidenceItem[]>(
     () => [
-      { label: 'Constitution version', value: 'v1', tone: 'ok' },
+      { label: 'Constitution version', value: CONSTITUTION_VERSION, tone: 'ok' },
       { label: 'Status', value: 'Ratified', tone: 'ok' },
-      { label: 'Core rules', value: '10 rules', tone: 'info' },
-      { label: 'Enforcement layers', value: '5 layers', tone: 'info' },
+      { label: 'Core rules', value: `${INSTITUTION_RULES.length} rules`, tone: 'info' },
+      { label: 'Enforcement layers', value: '6 layers', tone: 'info' },
       { label: 'Trust tiers', value: 'A / B / C', tone: 'info' },
       { label: 'Sanction escalation', value: 'Progressive', tone: 'warn' },
       { label: 'Identity gate', value: 'Moltbook', tone: 'ok' },

@@ -32,6 +32,9 @@ import { ConstitutionService } from './services/constitution-service.js';
 import { MoltbookWebhookService } from './services/moltbook-webhook-service.js';
 import { ReputationService } from './services/reputation-service.js';
 import { VaultService } from './services/vault-service.js';
+import { ModerationService } from './services/moderation-service.js';
+import { SanctionService } from './services/sanction-service.js';
+import { RateLimiter, getClientIp, type RateLimitGroup, type RateLimitConfig } from './core/rate-limit.js';
 import type { AuthContext, Store } from './types/domain.js';
 
 export type AppServices = {
@@ -51,12 +54,20 @@ export type AppServices = {
   identityService: MoltbookIdentityService;
   moltbookWebhookService: MoltbookWebhookService;
   constitutionService: ConstitutionService;
+  moderationService: ModerationService;
+  sanctionService: SanctionService;
 };
 
 export type CreateAppOptions = {
   services?: Partial<AppServices>;
   corsOrigins?: string[];
-  rateLimit?: { enabled: boolean };
+  rateLimit?: {
+    enabled: boolean;
+    globalMax?: number;
+    payoutMax?: number;
+    moltbookVerifyMax?: number;
+    timeWindow?: number;
+  };
 };
 
 const DEFAULT_AUDIENCE = 'clawbot.marketplace.local';
@@ -257,6 +268,13 @@ async function createServices(overrides: Partial<AppServices> = {}): Promise<App
     store, audit, undefined, moltbookCache
   );
   const constitutionService = overrides.constitutionService ?? new ConstitutionService(store, audit);
+  const moderationService = overrides.moderationService ?? new ModerationService(store, audit);
+  const sanctionService = overrides.sanctionService ?? new SanctionService(store, audit);
+
+  // TASK-HARD-012: Wire owner mismatch detection to flag persistence
+  identityService.setOwnerMismatchCallback((agentId, previousHandle, newHandle) => {
+    moderationService.persistMismatchFlag(agentId, previousHandle, newHandle);
+  });
 
   return {
     store,
@@ -274,7 +292,9 @@ async function createServices(overrides: Partial<AppServices> = {}): Promise<App
     paymentWebhookService,
     identityService,
     moltbookWebhookService,
-    constitutionService
+    constitutionService,
+    moderationService,
+    sanctionService
   };
 }
 
@@ -285,6 +305,33 @@ function auth(request: FastifyRequest): AuthContext {
   }
 
   return parseAuthContext(request.headers as Record<string, unknown>);
+}
+
+// TASK-HARD-009: Module-level rate limiter instance (shared across all route registrations)
+const globalRateLimiter = new RateLimiter();
+let rateLimitEnabled = true;
+let rateLimitOverrides: { globalMax?: number; payoutMax?: number; moltbookVerifyMax?: number; timeWindow?: number } = {};
+
+function rateLimitCheck(request: FastifyRequest, group: RateLimitGroup, key?: string): void {
+  if (!rateLimitEnabled) return;
+  const limitKey = key ?? getClientIp(request);
+
+  // Apply configurable overrides for testing
+  const tw = rateLimitOverrides.timeWindow ?? 60_000;
+  if (group === 'payout' && rateLimitOverrides.payoutMax !== undefined) {
+    globalRateLimiter.checkWithConfig(group, limitKey, { windowMs: tw, maxRequests: rateLimitOverrides.payoutMax });
+    return;
+  }
+  if (group === 'moltbookVerify' && rateLimitOverrides.moltbookVerifyMax !== undefined) {
+    globalRateLimiter.checkWithConfig(group, limitKey, { windowMs: tw, maxRequests: rateLimitOverrides.moltbookVerifyMax });
+    return;
+  }
+  if (rateLimitOverrides.globalMax !== undefined) {
+    globalRateLimiter.checkWithConfig('global_override', limitKey, { windowMs: tw, maxRequests: rateLimitOverrides.globalMax });
+    return;
+  }
+
+  globalRateLimiter.check(group, limitKey);
 }
 
 function assertRole(actor: AuthContext, roles: AuthContext['role'][]): void {
@@ -305,7 +352,18 @@ function assertContractAccess(actor: AuthContext, contract: { requesterAgentId: 
 }
 
 function enforcePolicy(services: AppServices, actor: AuthContext, action: string, context?: Record<string, unknown>) {
-  services.policyDecision.enforce({ action, actor, context });
+  // Auto-populate identityVerifiedAt and trustTier from identity service
+  // so privileged action checks in PolicyDecisionService work correctly.
+  let identityVerifiedAt: number | undefined;
+  let trustTier: 'A' | 'B' | 'C' | undefined;
+  try {
+    const snapshot = services.identityService.getSnapshot(actor.actorAgentId);
+    identityVerifiedAt = Math.floor(new Date(snapshot.checkedAt).getTime() / 1000);
+    trustTier = snapshot.trustTier as 'A' | 'B' | 'C';
+  } catch {
+    // No snapshot found — let the policy service handle it (will deny privileged actions)
+  }
+  services.policyDecision.enforce({ action, actor, context, identityVerifiedAt, trustTier });
 }
 
 function enforceFreshIdentity(services: AppServices, actor: AuthContext): void {
@@ -336,6 +394,8 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
   app.post('/v1/agents/onboarding/start', start);
 
   app.post('/v1/identity/moltbook/verify', async (request) => {
+    // TASK-HARD-009: Rate limit Moltbook verify (external API cost)
+    rateLimitCheck(request, 'moltbookVerify');
     const body = verifyBodySchema.parse(request.body);
     const snapshot = await services.identityService.verify(body.identityToken, body.audience);
 
@@ -346,6 +406,8 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
   });
 
   const onboardingVerify = async (request: FastifyRequest) => {
+    // TASK-HARD-009: Rate limit onboarding verify (Moltbook API cost)
+    rateLimitCheck(request, 'moltbookVerify');
     const body = verifyBodySchema.parse(request.body);
     const snapshot = await services.identityService.verify(body.identityToken, body.audience);
 
@@ -420,7 +482,18 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
   });
 
   app.post('/v1/sessions/exchange', async (request, reply) => {
+    // TASK-HARD-009: Rate limit session exchange (calls Moltbook verify)
+    rateLimitCheck(request, 'moltbookVerify');
     const body = sessionExchangeBodySchema.parse(request.body);
+
+    // VULN-10: Prevent privilege escalation via session exchange
+    assertDomain(
+      body.role !== 'admin' && body.role !== 'moderator',
+      'INVALID_SESSION_ROLE',
+      'Admin and moderator roles cannot be assigned via session exchange.',
+      403
+    );
+
     const snapshot = await services.identityService.verify(body.identityToken, DEFAULT_AUDIENCE);
 
     if (snapshot.hardBlocked) {
@@ -457,6 +530,8 @@ function registerOnboardingRoutes(app: FastifyInstance, services: AppServices) {
   });
 
   app.post('/v1/sessions/reverify', async (request, reply) => {
+    // TASK-HARD-009: Rate limit reverify (Moltbook API cost)
+    rateLimitCheck(request, 'moltbookVerify');
     const actor = auth(request);
     const body = reverifyBodySchema.parse(request.body ?? {});
     const snapshot = await services.identityService.reverify(actor.actorAgentId, body.audience, body.identityToken);
@@ -548,6 +623,19 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof DomainError) {
+      // TASK-HARD-009: Add retry-after header for rate limit responses
+      if (error.statusCode === 429 && error.code === 'RATE_LIMITED') {
+        const match = error.message.match(/in (\d+) seconds/);
+        const retryAfter = match ? parseInt(match[1], 10) : 60;
+        reply.header('retry-after', String(retryAfter));
+        return reply.status(429).send({
+          error: {
+            code: 'RATE_LIMITED',
+            message: error.message,
+            retryAfter
+          }
+        });
+      }
       return reply.status(error.statusCode).send({
         error: {
           code: error.code,
@@ -572,6 +660,50 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
         message: 'Unexpected server error.'
       }
     });
+  });
+
+  // TASK-HARD-009: Configure rate limiting from options.
+  // Reset rate limiter state on each createApp() call (critical for test isolation).
+  rateLimitEnabled = options.rateLimit?.enabled !== false;
+  rateLimitOverrides = {
+    globalMax: options.rateLimit?.globalMax,
+    payoutMax: options.rateLimit?.payoutMax,
+    moltbookVerifyMax: options.rateLimit?.moltbookVerifyMax,
+    timeWindow: options.rateLimit?.timeWindow
+  };
+  globalRateLimiter.reset();
+
+  app.addHook('onClose', () => {
+    globalRateLimiter.shutdown();
+  });
+
+  // TASK-HARD-009: Global rate limit hook — applies to all routes when globalMax is set.
+  // Also adds x-ratelimit-* headers to responses.
+  app.addHook('onRequest', async (request, reply) => {
+    if (!rateLimitEnabled) return;
+    if (rateLimitOverrides.globalMax !== undefined) {
+      const tw = rateLimitOverrides.timeWindow ?? 60_000;
+      const key = getClientIp(request);
+      try {
+        globalRateLimiter.checkWithConfig('global_override', key, { windowMs: tw, maxRequests: rateLimitOverrides.globalMax });
+      } catch (err) {
+        if (err instanceof DomainError && err.statusCode === 429) {
+          const retryAfter = Math.ceil(tw / 1000);
+          reply.header('retry-after', String(retryAfter));
+          return reply.status(429).send({
+            error: {
+              code: 'RATE_LIMITED',
+              message: err.message,
+              retryAfter
+            }
+          });
+        }
+        throw err;
+      }
+      reply.header('x-ratelimit-limit', String(rateLimitOverrides.globalMax));
+      const remaining = globalRateLimiter.remaining('global_override', key, rateLimitOverrides.globalMax);
+      reply.header('x-ratelimit-remaining', String(remaining));
+    }
   });
 
   app.get('/health', async () => ({ status: 'ok' }));
@@ -721,6 +853,70 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
     return services.marketplace.getSanctions(actor);
   });
 
+  // ─── TASK-FEAT-004: Sanction appeal, review, and expiry routes ─────────────
+
+  const sanctionAppealBodySchema = z.object({
+    reason: z.string().min(10)
+  });
+
+  const sanctionReviewBodySchema = z.object({
+    ruling: z.enum(['UPHELD', 'REVERSED'])
+  });
+
+  const sanctionIdParamsSchema = z.object({
+    sanctionId: z.string().min(1)
+  });
+
+  app.post('/v1/sanctions/:sanctionId/appeal', async (request) => {
+    const actor = auth(request);
+    const params = sanctionIdParamsSchema.parse(request.params);
+    const body = sanctionAppealBodySchema.parse(request.body);
+    return services.sanctionService.appealSanction(actor, params.sanctionId, body.reason);
+  });
+
+  app.post('/v1/sanctions/:sanctionId/review', async (request) => {
+    const actor = auth(request);
+    const params = sanctionIdParamsSchema.parse(request.params);
+    const body = sanctionReviewBodySchema.parse(request.body);
+    return services.sanctionService.reviewSanctionAppeal(actor, params.sanctionId, body.ruling);
+  });
+
+  app.post('/v1/sanctions/expire', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin', 'moderator']);
+    return services.sanctionService.checkAndExpireSanctions();
+  });
+
+  // ─── TASK-HARD-012: Owner mismatch moderation routes ────────────────────────
+
+  const moderationNotesSchema = z.object({
+    notes: z.string().max(1000).optional()
+  });
+
+  app.get('/v1/moderation/owner-mismatches', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin', 'moderator']);
+    return { flags: services.moderationService.listOwnerMismatches() };
+  });
+
+  app.post('/v1/moderation/agents/:agentId/clear-owner-mismatch', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin', 'moderator']);
+    const params = agentParamsSchema.parse(request.params);
+    const body = moderationNotesSchema.parse(request.body ?? {});
+    return services.moderationService.clearOwnerMismatch(actor, params.agentId, body.notes);
+  });
+
+  app.post('/v1/moderation/agents/:agentId/ban-owner-mismatch', async (request) => {
+    const actor = auth(request);
+    assertRole(actor, ['admin']);
+    const params = agentParamsSchema.parse(request.params);
+    const body = moderationNotesSchema.parse(request.body ?? {});
+    return services.moderationService.banOwnerMismatch(actor, params.agentId, body.notes);
+  });
+
+  // ─── End moderation routes ─────────────────────────────────────────────────
+
   app.get('/v1/worker/eligibility', async (request) => {
     const actor = auth(request);
     const query = workerEligibilityQuerySchema.parse(request.query);
@@ -736,6 +932,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/v1/wallet/topup', async (request) => {
     const actor = auth(request);
     const body = amountBodySchema.parse(request.body);
+    // BUG-MAJ-NEW-003: Enforce identity freshness on topup (admin bypassed)
+    enforceFreshIdentity(services, actor);
     enforcePolicy(services, actor, 'wallet.topup');
     return services.marketplace.topup(actor, body.amount);
   });
@@ -743,6 +941,7 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/v1/wallet/topups', async (request) => {
     const actor = auth(request);
     const body = amountBodySchema.parse(request.body);
+    enforceFreshIdentity(services, actor);
     enforcePolicy(services, actor, 'wallet.topup');
     return services.marketplace.topup(actor, body.amount);
   });
@@ -760,6 +959,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   });
 
   const payoutHandler = async (request: FastifyRequest) => {
+    // TASK-HARD-009: Rate limit payout (financial abuse prevention)
+    rateLimitCheck(request, 'payout');
     const actor = auth(request);
     const body = amountBodySchema.parse(request.body);
     // TASK-HARD-013: Check identity freshness BEFORE policy so expired sessions
@@ -795,6 +996,8 @@ export async function createApp(options: CreateAppOptions = {}): Promise<{ app: 
   app.post('/v1/payments/stripe/webhooks', {
     config: { rawBody: true }
   }, async (request, reply) => {
+    // TASK-HARD-009: Rate limit webhooks (DoS prevention)
+    rateLimitCheck(request, 'webhook');
     const signatureHeader = request.headers['stripe-signature'] as string | undefined;
 
     if (!signatureHeader) {

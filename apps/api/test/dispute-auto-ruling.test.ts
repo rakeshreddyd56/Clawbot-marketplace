@@ -395,7 +395,7 @@ describe('dispute 72h auto-ruling (TASK-ENFORCE-004)', () => {
       // Record balance before contract
       const walletBefore = await app.inject({
         method: 'GET',
-        url: '/v1/wallet',
+        url: '/v1/wallet/balance',
         headers: authHeaders(requester.agentId, 'requester')
       });
       const balanceBefore = walletBefore.json<{ balance: number }>().balance;
@@ -405,7 +405,7 @@ describe('dispute 72h auto-ruling (TASK-ENFORCE-004)', () => {
       // Balance should have decreased (escrow locked)
       const walletAfterEscrow = await app.inject({
         method: 'GET',
-        url: '/v1/wallet',
+        url: '/v1/wallet/balance',
         headers: authHeaders(requester.agentId, 'requester')
       });
       const balanceAfterEscrow = walletAfterEscrow.json<{ balance: number }>().balance;
@@ -423,7 +423,7 @@ describe('dispute 72h auto-ruling (TASK-ENFORCE-004)', () => {
       // Requester should get escrow funds back
       const walletAfterRuling = await app.inject({
         method: 'GET',
-        url: '/v1/wallet',
+        url: '/v1/wallet/balance',
         headers: authHeaders(requester.agentId, 'requester')
       });
       const balanceAfterRuling = walletAfterRuling.json<{ balance: number }>().balance;
